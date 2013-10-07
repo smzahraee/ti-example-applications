@@ -1,46 +1,33 @@
 AM_CFLAGS = $(filter-out -Wpointer-arith, $(WARN_CFLAGS))
 
 AM_CFLAGS += \
-	-I$(top_srcdir)/include/drm \
-	-I$(top_srcdir)/libkms/ \
-	-I$(top_srcdir)
+	@KMS_CFLAGS@ @DRM_CFLAGS@ 
 
-if HAVE_INSTALL_TESTS
+
 bin_PROGRAMS = \
-	drm_clone \
-	drm_extended \
-	drm_z_alpha
-else
-noinst_PROGRAMS = \
-	drm_clone \
-	drm_extended \
-	drm_z_alpha
-endif
+	drmclone \
+	drmextended \
+	drmzalpha
 
-drm_clone_SOURCES = \
+drmclone_SOURCES = \
 	buffers.c drm_clone.c buffers.h
 
-drm_extended_SOURCES = \
+drmclone_LDADD = \
+	@KMS_LIBS@ @DRM_LIBS@
+
+drmextended_SOURCES = \
 	buffers.c drm_extended.c buffers.h
 
-drm_z_alpha_SOURCES = \
+drmextended_LDADD = \
+	@KMS_LIBS@ @DRM_LIBS@
+
+drmzalpha_SOURCES = \
 	buffers.c drm_z_alpha.c buffers.h
 
-drm_clone_LDADD = \
-	$(top_builddir)/libdrm.la \
-	$(top_builddir)/libkms/libkms.la
+drmzalpha_LDADD = \
+	@KMS_LIBS@ @DRM_LIBS@
 
-drm_extended_LDADD = \
-	$(top_builddir)/libdrm.la \
-	$(top_builddir)/libkms/libkms.la
-
-drm_z_alpha_LDADD = \
-	$(top_builddir)/libdrm.la \
-	$(top_builddir)/libkms/libkms.la
-
-if HAVE_CAIRO
+if ENABLE_CAIRO
 AM_CFLAGS += $(CAIRO_CFLAGS)
-drm_clone_LDADD += $(CAIRO_LIBS)
-drm_extended_LDADD += $(CAIRO_LIBS)
-drm_z_alpha_LDADD += $(CAIRO_LIBS)
+drmclone_LDADD += $(CAIRO_LIBS)
 endif
