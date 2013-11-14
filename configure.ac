@@ -35,6 +35,7 @@ else
 fi
 AM_CONDITIONAL(ENABLE_CAIRO, [test "x$HAVE_CAIRO" = xyes])
 
+PKG_CHECK_MODULES(GTHREAD, gthread-2.0)
 
 # Checks for header files.
 
@@ -42,5 +43,5 @@ AM_CONDITIONAL(ENABLE_CAIRO, [test "x$HAVE_CAIRO" = xyes])
 
 # Checks for library functions.
 
-AC_CONFIG_FILES([Makefile vpe/Makefile drm-tests/Makefile thermal/Makefile])
+AC_CONFIG_FILES([Makefile vpe/Makefile drm-tests/Makefile thermal/Makefile messageq/messageq_ipc_linux/Makefile])
 AC_OUTPUT

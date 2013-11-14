@@ -1,0 +1,18 @@
+LINUX
+Linux side app gets auto built as part of the Yocto build.
+
+BIOS
+In order to build the BIOS side binary for this app
+navigate to this directory and update the <PATH> in the below command and run
+
+$ cd messageq_ipc_bios
+
+$ make -f ipc-bios.mak all PLATFORM=omap54xx_smp XDC_INSTALL_DIR=<PATH>/xdctools_3_25_02_70 BIOS_INSTALL_DIR=<PATH>/bios_6_35_02_45 ti.targets.arm.elf.M4=<PATH>/TI_CGT_TI_ARM_5.0.1 ti.targets.elf.C64T=<PATH>/TI_CGT_C6000_7.2.0
+
+Copy the built BIOS side binary found here 
+*************
+IPU:
+example-applications/messageq/messageq_ipc_bios/packages/ti/ipc/tests/bin/ti_platforms_sdp5430_IPU/messageq_zerocpy.xem4
+*************
+
+in to the target filesystem location: /lib/firmware rename the binary to ducati-m3-core0.xem3
