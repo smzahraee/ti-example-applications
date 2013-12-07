@@ -1,19 +1,55 @@
 /*
- * DRM based extended mode test program
- * Copyright (C) 2013 Texas Instruments
- * Authour: alaganraj <alaganraj.s@ti.com>
+ * Copyright (c) 2013, Texas Instruments
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
+ * - Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
  *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
+ * - Redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution.
+ *
+ * - Neither the name of the Texas Instruments nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+ * OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * @File	drm_extended.c
+ * @Authour	alaganraj <alaganraj.s@ti.com>
+ * @Brief	drm based extended mode test program
+ *
+ * This test app will demonstrate the overlay window and extended mode
+ * capability of omapdrm.
+ * 
+ * Extended Mode:
+ * Different image will be displayed on lcd and hdmi display.
+ *
+ * For overlay window, frame buffer is created & filled with pattern.
+ * Free plane is identified and attached to lcd_crtc to draw overlay
+ * window on lcd.
+ *
+ * For extended mode, app gets the connector, encoder and mode details
+ * for lcd and hdmi displays using drm APIs.Another two frame buffers
+ * are created and filled with test pattern.To achieve extended mode,
+ * both displays use the different frame buffer id. Call to 
+ * drmModeSetCrtc() will draw pattern on display along with overlay 
+ * window.
  */
 
 #include <stdio.h>
@@ -28,341 +64,539 @@
 #include <libkms.h>
 #include "buffers.h"
 
-int main(int argc, char *argv[])
-{
-	/* DRM system variables */
-	drmModeRes *resources;			/* resource pointer */
-	drmModeConnector *connector;		/* connector pointer */
-	drmModeConnector *lcd_connector;	/* LCD connector pointer */
-	drmModeEncoder *encoder, *lcd_encoder;	/* LCD encoder pointer */
-	drmModeModeInfo lcd_mode;		/* LCD mode in use */
-	drmModeCrtcPtr crtc;			/* crtc pointer */
-	drmModePlaneRes *plane_resources;	/* plane resource pointer */
-	drmModePlane *ovr;			/* plane pointer */
+struct device {
+	uint32_t fd;
 
-	/* HDMI Display variables */
-	drmModeConnector *hdmi_connector;	/* HDMI connector pointer */
-	drmModeEncoder *hdmi_encoder;		/* HDMI encoder pointer */
-	drmModeModeInfo hdmi_mode;		/* HDMI mode in use */
+	drmModeRes *res;
+	drmModePlaneRes *plane_res;
+	drmModeCrtcPtr crtc;
+
+	drmModeConnector *lcd_con;
+	drmModeEncoder *lcd_enc;
+	drmModeModeInfo lcd_mode;
+
+	drmModeConnector *hdmi_con;
+	drmModeEncoder *hdmi_enc;		
+	drmModeModeInfo hdmi_mode;
 
 	struct kms_driver *kms;
-	/* Plane variables */
-	uint32_t p_xres, p_yres;		/* plane mode: eg.320x240 */
-	uint32_t fb_id1;			/* plane framebuffer id */
-	uint32_t handles1[4], pitches1[4], offsets1[4]; /* we only use [0] */
-	struct kms_bo *plane_bo1;
-	uint32_t plane_id = 0;			/* plane id */
-	unsigned int pipe = 0;			/* Possible crtc */
-	uint32_t crtc_x, crtc_y, overlay_pos;	/* Overlay window position */
-	uint32_t crtc_w, crtc_h;		/* size to be displayed on LCD */
+	uint32_t p_xres;
+	uint32_t p_yres;
+	uint32_t fb_id1;
+	uint32_t crtc_x;
+	uint32_t crtc_y;
+	uint32_t crtc_w;
+	uint32_t crtc_h;
+	uint32_t plane_id;
 
-	/* LCD CRTC variables */
-	uint32_t xres, yres;			/* crtc mode: eg.800x480 */
-	uint32_t fb_id2;			/* crtc framebuffer id */
-	uint32_t handles2[4], pitches2[4], offsets2[4]; /* we only use [0] */
-	struct kms_bo *plane_bo2;
+	uint32_t xres;
+	uint32_t yres;
+	uint32_t fb_id2;
 
-	/* HDMI CRTC variables */
-	uint32_t hdmi_xres, hdmi_yres;		/* hdmi mode: eg.640x480 */
-	uint32_t fb_id3;			/* HDMI framebuffer id */
-	uint32_t handles3[4], pitches3[4], offsets3[4]; /* we only use [0] */
-	struct kms_bo *plane_bo3;
+	uint32_t hdmi_xres;
+	uint32_t hdmi_yres;
+	uint32_t fb_id3;
+};
 
-	uint32_t flags = 0, i;
-	int fd;					/* drm device handle */
-	uint32_t oid;				/* old framebuffer id */
+/**
+ *****************************************************************************
+ * @brief:  This function gets lcd and hdmi connectors id
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void get_drm_connector(struct device *dev)
+{
+	uint32_t i;
+	drmModeConnector *con;		
 
-	if (argc == 8) {
-		xres  = atoi(argv[1]);
-		yres  = atoi(argv[2]);
-		p_xres  = atoi(argv[3]);
-		p_yres  = atoi(argv[4]);
-		overlay_pos  = atoi(argv[5]);
-		hdmi_xres  = atoi(argv[6]);
-		hdmi_yres  = atoi(argv[7]);
-	} else {
-		printf("usage:\n#./drm_extended lcd_w lcd_h plane_w plane_h overlay_pos hdmi_w hdmi_h\n");
-		printf("\neg:\nLCD crtc mode=800x480\nplane mode=320x240\nHDMI crtc mode=640x480\n");
-		printf("overlay plane window position:\n");
-		printf("1 - top left corner\n");
-		printf("2 - top right corner\n");
-		printf("3 - bottom right  corner\n");
-		printf("4 - bottom left corner\n");
-		printf("5 - center\n");
-		printf("\n#./drm_extended 800 480 320 240 1 640 480\n\n");
-		exit(0);
-	}
-
-	switch (overlay_pos) {
-	case 1:
-		/* overlay plane window @ top left corner */
-		crtc_x = 0;
-		crtc_y = 0;
-		break;
-	case 2:
-		/* overlay plane window @ top right corner */
-		crtc_x = xres-p_xres;
-		crtc_y = 0;
-		break;
-	case 3:
-		/* overlay plane window @ bottom right corner */
-		crtc_x = xres-p_xres;
-		crtc_y = yres-p_yres;
-		break;
-	case 4:
-		/* overlay plane window @ bottom left corner */
-		crtc_x = 0;
-		crtc_y = yres-p_yres;
-		break;
-	case 5:
-	default:
-		/* overlay plane window @ center */
-		crtc_x = (xres/3);
-		crtc_y = (yres/3);
-		break;
-	}
-
-	crtc_w = p_xres;
-	crtc_h = p_yres;
-
-	/* open default dri device */
-	fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
-	if (fd < 0) {
-		printf("couldn't open /dev/dri/card0\n");
-		exit(0);
-	} else {
-		printf("/dev/dri/card0 open success!\n");
-	}
-
-	/* get drm resources */
-	resources = drmModeGetResources(fd);
-	if (!resources) {
-		printf("drmModeGetResources failed\n");
-		exit(0);
-	}
-
-	/* get original mode and framebuffer id */
-	crtc = drmModeGetCrtc(fd, resources->crtcs[0]);
-	if (!crtc) {
-		printf("drmModeGetCrtc failed\n");
-		exit(0);
-	}
-	oid = crtc->buffer_id;
-
-	/* get drm connector */
-	for (i = 0; i < resources->count_connectors; ++i) {
-		connector = drmModeGetConnector(fd, resources->connectors[i]);
-		if (!connector)
+	for (i = 0; i < dev->res->count_connectors; ++i) {
+		con = drmModeGetConnector(dev->fd, dev->res->connectors[i]);
+		if (!con)
 			continue;
 
-		if (connector->connection == DRM_MODE_CONNECTED && connector->count_modes > 0) {
-			if (connector->connector_type == DRM_MODE_CONNECTOR_HDMIA) {
-				hdmi_connector = connector;
-				printf("HDMI connector id = %d\n", hdmi_connector->connector_id);
+		if (con->connection == DRM_MODE_CONNECTED &&
+		    con->count_modes > 0) {
+			if (con->connector_type == DRM_MODE_CONNECTOR_HDMIA) {
+				dev->hdmi_con = con;
+				printf("hdmi connector id = %d\n",
+					dev->hdmi_con->connector_id);
 				break;
 			} else {
-				lcd_connector = connector;
-				printf("LCD connector id = %d\n", lcd_connector->connector_id);
+				dev->lcd_con = con;
+				printf("lcd connector id = %d\n",
+					dev->lcd_con->connector_id);
 				continue;
 			}
 		}
-		drmModeFreeConnector(connector);
+		drmModeFreeConnector(con);
 	}
 
-	if (i == resources->count_connectors) {
-		printf("No active connector found!\n");
+	if (i == dev->res->count_connectors) {
+		error("No active connector found!\n");
 		exit(0);
 	}
+}
 
-	/* acquire drm encoder */
-	for (i = 0; i < resources->count_encoders; ++i) {
-		encoder = drmModeGetEncoder(fd, resources->encoders[i]);
-		if (!encoder)
+/**
+ *****************************************************************************
+ * @brief:  This function gets lcd and hdmi encoders id
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void get_drm_encoder(struct device *dev)
+{
+	uint32_t i;
+	drmModeEncoder *enc;		
+
+	for (i = 0; i < dev->res->count_encoders; ++i) {
+		enc = drmModeGetEncoder(dev->fd, dev->res->encoders[i]);
+		if (!enc)
 			continue;
 
-		if (encoder->encoder_id == lcd_connector->encoder_id) {
-			lcd_encoder = encoder;
-			printf("LCD encoder id = %d\n", lcd_encoder->encoder_id);
+		if (enc->encoder_id == dev->lcd_con->encoder_id) {
+			dev->lcd_enc = enc;
+			printf("lcd encoder id = %d\n",
+				dev->lcd_enc->encoder_id);
 			continue;
-		} else if (encoder->encoder_id == hdmi_connector->encoder_id) {
-			hdmi_encoder = encoder;
-			printf("HDMI encoder id = %d\n", hdmi_encoder->encoder_id);
+		} else if (enc->encoder_id == dev->hdmi_con->encoder_id) {
+			dev->hdmi_enc = enc;
+			printf("hdmi encoder id = %d\n",
+				dev->hdmi_enc->encoder_id);
 			break;
 		}
-		drmModeFreeEncoder(encoder);
+		drmModeFreeEncoder(enc);
 	}
 
-	if (i == resources->count_encoders) {
-		printf("No active encoder found!\n");
+	if (i == dev->res->count_encoders) {
+		error("No active encoder found!\n");
 		exit(0);
 	}
+}
 
-	/* check requested mode for LCD */
-	for (i = 0; i < lcd_connector->count_modes; ++i) {
-		lcd_mode = lcd_connector->modes[i];
-		if ((lcd_mode.hdisplay == xres) && (lcd_mode.vdisplay == yres))
+/**
+ *****************************************************************************
+ * @brief:  This function checks and gets the requested mode for lcd 
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void get_lcd_mode(struct device *dev)
+{
+	uint32_t i;
+
+	for (i = 0; i < dev->lcd_con->count_modes; ++i) {
+		dev->lcd_mode = dev->lcd_con->modes[i];
+
+		if ((dev->lcd_mode.hdisplay == dev->xres) &&
+		    (dev->lcd_mode.vdisplay == dev->yres))
 			break;
 	}
 
-	if (i == lcd_connector->count_modes) {
-		printf("requested mode for LCD not found!");
+	if (i == dev->lcd_con->count_modes) {
+		error("requested mode for lcd not found!\n");
 		exit(0);
 	}
+}
 
-	/* check requested mode for HDMI Display */
-	for (i = 0; i < hdmi_connector->count_modes; ++i) {
-		hdmi_mode = hdmi_connector->modes[i];
-		if ((hdmi_mode.hdisplay == hdmi_xres) && (hdmi_mode.vdisplay == hdmi_yres))
+/**
+ *****************************************************************************
+ * @brief:  This function checks and gets the requested mode for hdmi
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void get_hdmi_mode(struct device *dev)
+{
+	uint32_t i;
+
+	for (i = 0; i < dev->hdmi_con->count_modes; ++i) {
+		dev->hdmi_mode = dev->hdmi_con->modes[i];
+
+		if ((dev->hdmi_mode.hdisplay == dev->hdmi_xres) &&
+		    (dev->hdmi_mode.vdisplay == dev->hdmi_yres))
 			break;
 	}
 
-	if (i == hdmi_connector->count_modes) {
-		printf("requested mode for HDMI not found!");
+	if (i == dev->hdmi_con->count_modes) {
+		error("requested mode for hdmi not found!\n");
 		exit(0);
 	}
+}
 
-	/* create kms driver */
-	i = kms_create(fd, &kms);
-	if (i) {
-		printf("failed to create kms driver\n");
-		exit(0);
-	}
+/**
+ *****************************************************************************
+ * @brief:  This function gets free plane, which will be used as overlay 
+ * 	    window
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void get_plane_id(struct device *dev)
+{
+	drmModePlane *ovr;
+	uint32_t i;
 
-	/* get plane resource */
-	plane_resources =  drmModeGetPlaneResources(fd);
-	if (!plane_resources) {
-		printf("drmModeGetPlaneResources failed\n");
-		exit(0);
-	}
+	/* Possible crtc */
+	uint32_t pipe = 0;
 
-	/* get plane */
-	for (i = 0; i < plane_resources->count_planes && !plane_id; i++) {
-		ovr = drmModeGetPlane(fd, plane_resources->planes[i]);
+	for (i = 0; i < dev->plane_res->count_planes && !dev->plane_id; i++) {
+		ovr = drmModeGetPlane(dev->fd, dev->plane_res->planes[i]);
 		if (!ovr)
 			continue;
 
+		/* Check possible crtcs, it already attached to some crtc? */
 		if ((ovr->possible_crtcs & (1 << pipe)) && !ovr->crtc_id) {
-			plane_id = ovr->plane_id;
+			dev->plane_id = ovr->plane_id;
 			break;
 		}
 		drmModeFreePlane(ovr);
 	}
 
-	if (!plane_id) {
-		printf("failed to find plane!\n");
+	if (!dev->plane_id) {
+		error("failed to find plane!\n");
 		exit(0);
 	}
+}
 
-	/* Plane */
-	/* create test buffer for plane */
-	plane_bo1 = create_test_buffer(kms, DRM_FORMAT_XRGB8888, p_xres,
-				       p_yres, handles1, pitches1, offsets1,
+/**
+ *****************************************************************************
+ * @brief:  This function creates test buffer with pattern filled. Get frame 
+ * 	    buffer id for test buffer using drm API. Attach the plane to 
+ * 	    lcd_crtc to draw overlay window on lcd.
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void set_plane(struct device *dev)
+{
+	uint32_t flags = 0;
+	uint32_t handles1[4], pitches1[4], offsets1[4];
+	struct kms_bo *plane_bo1;
+
+	/* Size to be displayed on lcd */
+	dev->crtc_w = dev->p_xres;
+	dev->crtc_h = dev->p_yres;
+
+	plane_bo1 = create_test_buffer(dev->kms, DRM_FORMAT_XRGB8888, 
+				       dev->p_xres, dev->p_yres,
+				       handles1, pitches1, offsets1,
 				       PATTERN_TILES);
 	if (!plane_bo1) {
-		printf("create test buffer for plane failed\n");
+		error("create test buffer for plane failed\n");
 		exit(0);
 	}
 
-	/* just use single plane format for now.. */
-	if (drmModeAddFB2(fd, p_xres, p_yres, DRM_FORMAT_XRGB8888, handles1,
-			  pitches1, offsets1, &fb_id1, flags)) {
-		printf("failed to add fb for plane\n");
+	if (drmModeAddFB2(dev->fd, dev->p_xres, dev->p_yres,
+			  DRM_FORMAT_XRGB8888, handles1, pitches1,
+			  offsets1, &dev->fb_id1, flags)) {
+		error("failed to add fb for plane\n");
 		exit(0);
 	}
 
-#if 1   /* overlay window on LCD */
+#if 1   /* Overlay window on lcd */
 
-	/* To achieve overlay, set plane before crtc */
-	/* note src coords (last 4 args) are in Q16 format */
-	if (drmModeSetPlane(fd, plane_id, lcd_encoder->crtc_id, fb_id1, flags,
-			    crtc_x, crtc_y, crtc_w, crtc_h, 0, 0,
-			    p_xres << 16, p_yres << 16)) {
-		printf("failed to enable plane\n");
+	/* Note src coords (last 4 args) are in Q16 format */
+	if (drmModeSetPlane(dev->fd, dev->plane_id, dev->lcd_enc->crtc_id, 
+			    dev->fb_id1, flags, dev->crtc_x, dev->crtc_y,
+			    dev->crtc_w, dev->crtc_h, 0, 0, 
+			    dev->p_xres << 16, dev->p_yres << 16)) {
+		error("failed to enable plane\n");
 		exit(0);
 	}
 
-#else   /* overlay window on HDMI Display */
+#else   /* Overlay window on hdmi Display */
 
-	/* To achieve overlay, set plane before crtc */
-	/* note src coords (last 4 args) are in Q16 format */
-	if (drmModeSetPlane(fd, plane_id, hdmi_encoder->crtc_id, fb_id1, flags,
-			    crtc_x, crtc_y, crtc_w, crtc_h, 0, 0,
-			    p_xres << 16, p_yres << 16)) {
-		printf("failed to enable plane\n");
+	if (drmModeSetPlane(dev->fd, dev->plane_id, dev->hdmi_enc->crtc_id,
+			    dev->fb_id1, flags, dev->crtc_x, dev->crtc_y,
+			    dev->crtc_w, dev->crtc_h, 0, 0,
+			    dev->p_xres << 16, dev->p_yres << 16)) {
+		error("failed to enable plane\n");
 		exit(0);
 	}
 #endif
+}
 
-	/* LCD CRTC */
-	/* create test buffer for LCD */
-	plane_bo2 = create_test_buffer(kms, DRM_FORMAT_XRGB8888, xres, yres,
+/**
+ *****************************************************************************
+ * @brief:  This function creates test buffer with pattern filled. Get frame 
+ * 	    buffer id for test buffer using drm API. Call to drmModeSetCrtc()
+ *	    will draw pattern on lcd along with overlay window, which is 
+ * 	    attached to it.
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void set_crtc(struct device *dev)
+{
+	uint32_t flags = 0;
+	uint32_t handles2[4], pitches2[4], offsets2[4];
+	struct kms_bo *plane_bo2;
+
+	plane_bo2 = create_test_buffer(dev->kms, DRM_FORMAT_XRGB8888,
+				       dev->xres, dev->yres,
 				       handles2, pitches2, offsets2,
 				       PATTERN_SMPTE);
 	if (!plane_bo2) {
-		printf("create test buffer for LCD failed\n");
+		error("create test buffer for lcd failed\n");
 		exit(0);
 	}
 
-	/* just use single plane format for now.. */
-	if (drmModeAddFB2(fd, xres, yres, DRM_FORMAT_XRGB8888, handles2,
-			  pitches2, offsets2, &fb_id2, flags)) {
-		printf("failed to add fb for crtc\n");
+	if (drmModeAddFB2(dev->fd, dev->xres, dev->yres,
+			  DRM_FORMAT_XRGB8888, handles2, pitches2,
+			  offsets2, &dev->fb_id2, flags)) {
+		error("failed to add fb for crtc\n");
 		exit(0);
 	}
 
-	/* set crtc, this will draw test pattern on LCD screen */
-	if (drmModeSetCrtc(fd, lcd_encoder->crtc_id, fb_id2, 0, 0,
-			   &lcd_connector->connector_id, 1, &lcd_mode)) {
-		printf("failed to set mode for LCD!");
+	if (drmModeSetCrtc(dev->fd, dev->lcd_enc->crtc_id, dev->fb_id2,
+			   0, 0, &dev->lcd_con->connector_id, 1,
+			   &dev->lcd_mode)) {
+		error("failed to set mode for lcd!\n");
 		exit(0);
 	}
+}
 
-	/* EXTENDED MODE */
-	/* HDMI */
-	/* create test buffer for HDMI */
-	plane_bo3 = create_test_buffer(kms, DRM_FORMAT_XRGB8888, hdmi_xres, hdmi_yres,
+/**
+ *****************************************************************************
+ * @brief:  This function achieves extended mode by using different 
+ *	    framebuffer id, which is created for hdmi.This will draw different
+ *	    test pattern on hdmi. 
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void set_extended_mode(struct device *dev)
+{
+	uint32_t flags = 0;
+	uint32_t handles3[4], pitches3[4], offsets3[4];
+	struct kms_bo *plane_bo3;
+
+	/* create test buffer for hdmi */
+	plane_bo3 = create_test_buffer(dev->kms, DRM_FORMAT_XRGB8888,
+				       dev->hdmi_xres, dev->hdmi_yres,
 				       handles3, pitches3, offsets3,
 				       PATTERN_TILES);
 	if (!plane_bo3) {
-		printf("create test buffer for hdmi failed\n");
+		error("create test buffer for hdmi failed\n");
 		exit(0);
 	}
 
-	/* just use single plane format for now.. */
-	if (drmModeAddFB2(fd, hdmi_xres, hdmi_yres, DRM_FORMAT_XRGB8888, handles3,
-			  pitches3, offsets3, &fb_id3, flags)) {
-		printf("failed to add fb for hdmi\n");
+	if (drmModeAddFB2(dev->fd, dev->hdmi_xres, dev->hdmi_yres,
+			  DRM_FORMAT_XRGB8888, handles3, pitches3,
+			  offsets3, &dev->fb_id3, flags)) {
+		error("failed to add fb for hdmi\n");
 		exit(0);
 	}
 
-	/* set crtc, this will draw test pattern on HDMI screen */
-	if (drmModeSetCrtc(fd, hdmi_encoder->crtc_id, fb_id3, 0, 0,
-			   &hdmi_connector->connector_id, 1, &hdmi_mode)) {
-		printf("failed to set mode for HDMI!");
+	if (drmModeSetCrtc(dev->fd, dev->hdmi_enc->crtc_id, dev->fb_id3,
+			   0, 0, &dev->hdmi_con->connector_id, 1,
+			   &dev->hdmi_mode)) {
+		error("failed to set mode for hdmi!\n");
+		exit(0);
+	}
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function extracts the lcd mode from command line
+ *
+ * @param:  dev  device pointer
+ * @param:  p  	 optarg pointer
+ *
+ * @return: 0 on success
+ *****************************************************************************
+*/
+static int parse_lcd(struct device *dev, const char *p)
+{
+	char *end;
+
+	dev->xres = strtoul(p, &end, 10);
+	if (*end != 'x')
+		return -1;
+
+	p = end + 1;
+	dev->yres = strtoul(p, &end, 10);
+
+	return 0;
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function extracts the hdmi mode from command line
+ *
+ * @param:  dev  device pointer
+ * @param:  p  	 optarg pointer
+ *
+ * @return: 0 on success
+ *****************************************************************************
+*/
+static int parse_hdmi(struct device *dev, const char *p)
+{
+	char *end;
+
+	dev->hdmi_xres = strtoul(p, &end, 10);
+	if (*end != 'x')
+		return -1;
+
+	p = end + 1;
+	dev->hdmi_yres = strtoul(p, &end, 10);
+
+	return 0;
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function extracts the overlay window mode & position from
+ *	    command line
+ *
+ * @param:  dev  device pointer
+ * @param:  p  	 optarg pointer
+ *
+ * @return: 0 on success
+ *****************************************************************************
+*/
+static int parse_plane(struct device *dev, const char *p)
+{
+	char *end;
+
+	dev->p_xres = strtoul(p, &end, 10);
+	if (*end != 'x')
+		return -1;
+
+	p = end + 1;
+	dev->p_yres = strtoul(p, &end, 10);
+	if (*end != ':')
+		return -1;
+
+	p = end + 1;
+	dev->crtc_x = strtoul(p, &end, 10);
+	if (*end != '+')
+		return -1;
+
+	p = end + 1;
+	dev->crtc_y = strtoul(p, &end, 10);
+
+	return 0;
+}
+
+static void usage()
+{
+	printf("Usage:\n");
+	printf("-l wxh\t\t- set lcd mode\n");
+	printf("-h wxh\t\t- set hdmi mode\n");
+	printf("-p wxh:x+y\t- set plane mode & ");
+	printf("overlay window position value (x,y)\n\nex:\n");
+	printf("# drmextended -l 800x480 -p 320x240:0+0 -h 640x480\n\n");
+	exit(0);
+}
+
+static char optstr[] = "p:l:h:";
+
+int main(int argc, char *argv[])
+{
+	struct device dev;
+
+	uint32_t c, ret;
+	uint32_t oid;
+
+	memset(&dev, 0, sizeof dev);
+
+	while ((c = getopt(argc, argv, optstr)) != -1) {
+
+		switch (c) {
+		case 'p':
+			if (parse_plane(&dev, optarg) < 0)
+				usage();
+			break;
+		case 'l':
+			if (parse_lcd(&dev, optarg) < 0)
+				usage();
+			break;
+		case 'h':
+			if (parse_hdmi(&dev, optarg) < 0)
+				usage();
+			break;
+		default:
+			usage();
+			break;
+		}
+	}
+
+	if (argc < 7)
+		usage();
+
+	/* Open default dri device */
+	dev.fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+	if (dev.fd < 0) {
+		error("couldn't open /dev/dri/card0\n");
+		exit(0);
+	} else {
+		printf("/dev/dri/card0 open success!\n");
+	}
+
+	/* Get drm resources */
+	dev.res = drmModeGetResources(dev.fd);
+	if (!dev.res) {
+		error("drmModeGetResources failed\n");
 		exit(0);
 	}
 
-	/* XXX: Actually check if this is needed */
-	drmModeDirtyFB(fd, fb_id2, 0, 0);
-	drmModeDirtyFB(fd, fb_id3, 0, 0);
+	/* Get plane resource */
+	dev.plane_res =  drmModeGetPlaneResources(dev.fd);
+	if (!dev.plane_res) {
+		error("drmModeGetPlaneResources failed\n");
+		exit(0);
+	}
 
-	/* wait for enter key */
+	/* Get original mode and framebuffer id */
+	dev.crtc = drmModeGetCrtc(dev.fd, dev.res->crtcs[0]);
+	if (!dev.crtc) {
+		error("drmModeGetCrtc failed\n");
+		exit(0);
+	}
+	oid = dev.crtc->buffer_id;
+
+	get_drm_connector(&dev);
+	get_drm_encoder(&dev);
+	get_lcd_mode(&dev);
+	get_hdmi_mode(&dev);
+	get_plane_id(&dev);
+
+	/* Create kms driver */
+	ret = kms_create(dev.fd, &dev.kms);
+	if (ret) {
+		error("failed to create kms driver\n");
+		exit(0);
+	}
+
+	/* To achieve overlay, set plane before crtc */
+	set_plane(&dev);
+	set_crtc(&dev);
+	set_extended_mode(&dev);
+
+	drmModeDirtyFB(dev.fd, dev.fb_id2, 0, 0);
+	drmModeDirtyFB(dev.fd, dev.fb_id3, 0, 0);
+
 	getchar();
 
-	/* undo the drm setup in the correct sequence */
-	drmModeSetCrtc(fd, encoder->crtc_id, oid, 0, 0, &connector->connector_id, 1, &(crtc->mode));
-	drmModeRmFB(fd, fb_id3);
-	drmModeRmFB(fd, fb_id2);
-	drmModeRmFB(fd, fb_id1);
-	drmModeFreePlane(ovr);
-	drmModeFreePlaneResources(plane_resources);
-	drmModeFreeEncoder(hdmi_encoder);
-	drmModeFreeEncoder(lcd_encoder);
-	drmModeFreeConnector(hdmi_connector);
-	drmModeFreeConnector(lcd_connector);
-	drmModeFreeCrtc(crtc);
-	drmModeFreeResources(resources);
-	close(fd);
+	/* Undo the drm setup in the correct sequence */
+	drmModeSetCrtc(dev.fd, dev.lcd_enc->crtc_id, oid, 
+		       0, 0, &dev.lcd_con->connector_id,
+		       1, &(dev.crtc->mode));
+
+	drmModeRmFB(dev.fd, dev.fb_id3);
+	drmModeRmFB(dev.fd, dev.fb_id2);
+	drmModeRmFB(dev.fd, dev.fb_id1);
+	drmModeFreePlaneResources(dev.plane_res);
+	drmModeFreeEncoder(dev.hdmi_enc);
+	drmModeFreeEncoder(dev.lcd_enc);
+	drmModeFreeConnector(dev.hdmi_con);
+	drmModeFreeConnector(dev.lcd_con);
+	drmModeFreeCrtc(dev.crtc);
+	drmModeFreeResources(dev.res);
+	close(dev.fd);
 
 	return 0;
 }
