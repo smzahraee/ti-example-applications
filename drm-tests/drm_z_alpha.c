@@ -1,19 +1,54 @@
 /*
- * DRM based z-order & alpha blending test program with 2 planes
- * Copyright (C) 2013 Texas Instruments
- * Authour: alaganraj <alaganraj.s@ti.com>
+ * Copyright (c) 2013, Texas Instruments
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
+ * - Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
  *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
+ * - Redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution.
+ *
+ * - Neither the name of the Texas Instruments nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+ * OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * @File    drm_z_alpha.c
+ * @Authour alaganraj <alaganraj.s@ti.com>
+ * @Brief   drm based z-order & alpha blending test program
+ * 
+ * Z-order:
+ * It determines, which overlay window appears on top of other.
+ * 
+ * Alpha Blend:
+ * It determines transparency level of image as a result of both
+ * global alpha & pre multiplied alpha value. 
+ *
+ * For two overlay windows, separate frame buffers are created & 
+ * filled with pattern. Free planes are identified and attached to
+ * lcd_crtc to draw overlay windows on lcd. 
+ * 
+ * This application gets the connector, encoder and mode details
+ * for lcd using drm APIs. Another frame buffer created
+ * and filled with test pattern.Call to drmModeSetCrtc() will draw 
+ * pattern on display along with overlay windows.
  */
 
 #include <stdio.h>
@@ -28,308 +63,526 @@
 #include <libkms.h>
 #include "buffers.h"
 
-int main(int argc, char *argv[])
-{
-	/* DRM system variables */
-	drmModeRes *resources;			/* resource pointer */
-	drmModeConnector *connector;		/* connector pointer */
-	drmModeEncoder *encoder;		/* encoder pointer */
-	drmModeModeInfo mode;			/* video mode in use */
-	drmModeCrtcPtr crtc;			/* crtc pointer */
+struct plane {
+	uint32_t id;
+	uint32_t xres;
+	uint32_t yres;
+	uint32_t fb_id;
+	uint32_t z_val;
+	uint32_t glo_alp;
+	uint32_t pre_mul_alp;
+};
+
+struct device {
+	uint32_t fd;
+
+	drmModeRes *res;
+	drmModeCrtcPtr crtc;
+
+	drmModeConnector *con;
+	drmModeEncoder *enc;
+	drmModeModeInfo mode;
 
 	struct kms_driver *kms;
-	/* Plane1 variables */
-	uint32_t p1_xres, p1_yres;		/* plane1 mode: eg.320x240 */
-	uint32_t fb_id1;			/* plane1 framebuffer id */
-	uint32_t handles1[4], pitches1[4], offsets1[4]; /* we only use [0] */
+	struct plane p1; 
+	struct plane p2; 
+	uint32_t crtc_x;
+	uint32_t crtc_y;
+	uint32_t crtc_w;
+	uint32_t crtc_h;
+
+	uint32_t xres;
+	uint32_t yres;
+	uint32_t fb_id3;
+};
+
+/**
+ *****************************************************************************
+ * @brief:  This function gets lcd connector id
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void get_drm_connector(struct device *dev)
+{
+	uint32_t i;
+
+	for (i = 0; i < dev->res->count_connectors; ++i) {
+		dev->con = drmModeGetConnector(dev->fd,
+					       dev->res->connectors[i]);
+		if (!dev->con)
+			continue;
+
+		if (dev->con->connection == DRM_MODE_CONNECTED &&
+		    dev->con->count_modes > 0)
+			break;
+
+		drmModeFreeConnector(dev->con);
+	}
+
+	if (i == dev->res->count_connectors) {
+		error("No active connector found!\n");
+		exit(0);
+	}
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function gets lcd encoder id
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void get_drm_encoder(struct device *dev)
+{
+	uint32_t i;
+
+	for (i = 0; i < dev->res->count_encoders; ++i) {
+		dev->enc = drmModeGetEncoder(dev->fd,
+					     dev->res->encoders[i]);
+		if (!dev->enc)
+			continue;
+
+		if (dev->enc->encoder_id == dev->con->encoder_id)
+			break;
+
+		drmModeFreeEncoder(dev->enc);
+	}
+
+	if (i == dev->res->count_encoders) {
+		error("No active encoder found!\n");
+		exit(0);
+	}
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function checks and gets the requested mode for lcd 
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void get_lcd_mode(struct device *dev)
+{
+	uint32_t i;
+
+	for (i = 0; i < dev->con->count_modes; ++i) {
+		dev->mode = dev->con->modes[i];
+
+		if ((dev->mode.hdisplay == dev->xres) &&
+		    (dev->mode.vdisplay == dev->yres))
+			break;
+	}
+
+	if (i == dev->con->count_modes) {
+		error("mode %dx%d not found!\n", dev->xres, dev->yres);
+		exit(0);
+	}
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function sets z-order value for plane 1 and plane 2.
+ *	    Property id for z-order is 7, run modetest app to find.
+ *
+ * @param:  dev       device pointer
+ * @param:  plane_id  plane id of overlay window
+ *****************************************************************************
+*/
+static void set_z_order(struct device *dev, uint32_t plane_id)
+{
+	uint32_t i, val;
+
+	if (plane_id == dev->p1.id)
+		val = dev->p1.z_val;
+	else
+		val = dev->p2.z_val;
+
+	i = drmModeObjectSetProperty(dev->fd, plane_id, 
+				     DRM_MODE_OBJECT_PLANE, 7, val);
+	if (i < 0) {
+		error("set z-order for plane id %d failed\n", plane_id);
+		exit(0);
+	}
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function sets global alpha value for plane 1 and plane 2.
+ *	     Property id for global alpha is 8, run modetest app to find.
+ *
+ * @param:  dev       device pointer
+ * @param:  plane_id  plane id of overlay window
+ *****************************************************************************
+*/
+static void set_global_alpha(struct device *dev, uint32_t plane_id)
+{
+	uint32_t i, val;
+
+	if (plane_id == dev->p1.id)
+		val = dev->p1.glo_alp;
+	else
+		val = dev->p2.glo_alp;
+
+	i = drmModeObjectSetProperty(dev->fd, plane_id,
+				     DRM_MODE_OBJECT_PLANE, 8, val);
+	if (i < 0) {
+		error("set global alpha for plane id %d failed\n", plane_id);
+		exit(0);
+	}
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function sets pre multiplied alpha value for plane 1 and
+ * 	    plane 2. Property id for pre multiplied alpha is 9, run modetest
+ *	    app to find.
+ *
+ * @param:  dev       device pointer
+ * @param:  plane_id  plane id of overlay window
+ *****************************************************************************
+*/
+static void set_pre_multiplied_alpha(struct device *dev, uint32_t plane_id)
+{
+	uint32_t i, val;
+
+	if (plane_id == dev->p1.id)
+		val = dev->p1.pre_mul_alp;
+	else
+		val = dev->p2.pre_mul_alp;
+
+	i = drmModeObjectSetProperty(dev->fd, plane_id,
+				     DRM_MODE_OBJECT_PLANE, 9, val);
+	if (i < 0) {
+		error("set pre multiply alpha for plane id %d failed\n",
+		      plane_id);
+		exit(0);
+	}
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function creates test buffer with pattern filled. Get frame 
+ * 	    buffer id for test buffer using drm API. Attach the plane1 to 
+ * 	    lcd_crtc to draw overlay window on lcd.
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void set_plane1(struct device *dev)
+{
+        uint32_t flags = 0;
+	uint32_t handles1[4], pitches1[4], offsets1[4];
 	struct kms_bo *plane_bo1;
-	/* plane id, z-order, alpha blend variables */
-	uint32_t plane1_id, plane1_z_val, plane1_glo_alp_val, plane1_pre_mul_alp_val;
 
-	/* Plane2 variables */
-	uint32_t p2_xres, p2_yres;		/* plane2 mode: eg.160x120 */
-	uint32_t fb_id2;			/* plane2 framebuffer id */
-	uint32_t handles2[4], pitches2[4], offsets2[4];	/* we only use [0] */
-	struct kms_bo *plane_bo2;
-	/* plane id, z-order, alpha blend variables */
-	uint32_t plane2_id, plane2_z_val, plane2_glo_alp_val, plane2_pre_mul_alp_val;
+	/* Plane1 mode */
+	dev->p1.xres = 320;
+	dev->p1.yres = 240;
 
-	unsigned int pipe = 0;			/* possible crtc */
-	uint32_t crtc_x, crtc_y;		/* overlay window position */
-	uint32_t crtc_w, crtc_h;		/* size to be displayed on LCD */
+	/* Position of overlay window:(0,0) for top left corner,
+	   change value if you want to place it somewhere.
+	*/
+	dev->crtc_x = 0;
+	dev->crtc_y = 0;
 
-	/* CRTC variables */
-	uint32_t xres, yres;			/* crtc mode: eg.800x480 */
-	uint32_t fb_id3;			/* crtc framebuffer id */
-	uint32_t handles3[4], pitches3[4], offsets3[4]; /* we only use [0] */
-	struct kms_bo *plane_bo3;
+	/* Size to be displayed on lcd */
+	dev->crtc_w = dev->p1.xres;
+	dev->crtc_h = dev->p1.yres;
 
-	uint32_t flags = 0, i;
-	int fd;					/* drm device handle */
-	uint32_t oid;				/* old framebuffer id */
-
-	if (argc == 11) {
-		xres  = atoi(argv[1]);
-		yres  = atoi(argv[2]);
-		plane1_id = atoi(argv[3]);
-		plane1_z_val  = atoi(argv[4]);
-		plane1_glo_alp_val  = atoi(argv[5]);
-		plane1_pre_mul_alp_val  = atoi(argv[6]);
-		plane2_id = atoi(argv[7]);
-		plane2_z_val  = atoi(argv[8]);
-		plane2_glo_alp_val  = atoi(argv[9]);
-		plane2_pre_mul_alp_val  = atoi(argv[10]);
-	} else {
-		printf("usage:\n#./drm_z_alpha <crtc_w> <crtc_h> <plane1_id> <z_val> <glo_alpha> ");
-		printf("<pre_mul_alpha> <plane2_id> <z_val> <glo_alpha> <pre_mul_alpha>\n");
-		printf("\neg:\ncrtc mode = 800x480\n");
-		printf("\nrun modetest app to find plane ids\n");
-		printf("\nz-order value between 0 to 3\n\t- lowest value for bottom\n");
-		printf("\t- highest value for top\n");
-		printf("\nglobal alpha value between 0 to 255\n\t0   - fully transparent\n");
-		printf("\t127 - semi transparent\n\t255 - fully opaque\n");
-		printf("\npre multipled alpha value\n\t0 - source is premultiply with alpha\n");
-		printf("\t1 - source is not premultiply with alpha\n");
-		printf("\n#./drm_z_alpha 800 480 15 1 255 1 16 2 255 1\n\n");
-		exit(0);
-	}
-
-	/* plane modes are hard coded to avoid too many command line arguments */
-	/* plane1 mode */
-	p1_xres = 320;
-	p1_yres = 240;
-
-	/* plane2 mode */
-	p2_xres = 160;
-	p2_yres = 120;
-
-	/* open default dri device */
-	fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
-	if (fd < 0) {
-		printf("couldn't open /dev/dri/card0\n");
-		exit(0);
-	} else {
-		printf("/dev/dri/card0 open success!\n");
-	}
-
-	/* get drm resources */
-	resources = drmModeGetResources(fd);
-	if (!resources) {
-		printf("drmModeGetResources failed\n");
-		exit(0);
-	}
-
-	/* get original mode and framebuffer id */
-	crtc = drmModeGetCrtc(fd, resources->crtcs[0]);
-	if (!crtc) {
-		printf("drmModeGetCrtc failed\n");
-		exit(0);
-	}
-	oid = crtc->buffer_id;
-
-	/* get drm connector */
-	for (i = 0; i < resources->count_connectors; ++i) {
-		connector = drmModeGetConnector(fd, resources->connectors[i]);
-		if (!connector)
-			continue;
-
-		if (connector->connection == DRM_MODE_CONNECTED && connector->count_modes > 0)
-			break;
-
-		drmModeFreeConnector(connector);
-	}
-
-	if (i == resources->count_connectors) {
-		printf("No active connector found!\n");
-		exit(0);
-	}
-
-	/* acquire drm encoder */
-	for (i = 0; i < resources->count_encoders; ++i) {
-		encoder = drmModeGetEncoder(fd, resources->encoders[i]);
-		if (!encoder)
-			continue;
-
-		if (encoder->encoder_id == connector->encoder_id)
-			break;
-
-		drmModeFreeEncoder(encoder);
-	}
-
-	if (i == resources->count_encoders) {
-		printf("No active encoder found!\n");
-		exit(0);
-	}
-
-	/* check for requested mode */
-	for (i = 0; i < connector->count_modes; ++i) {
-		mode = connector->modes[i];
-		if ((mode.hdisplay == xres) && (mode.vdisplay == yres))
-			break;
-	}
-
-	if (i == connector->count_modes) {
-		printf("requested mode %dx%d not found!", xres, yres);
-		exit(0);
-	}
-
-	/* create kms driver */
-	i = kms_create(fd, &kms);
-	if (i) {
-		printf("failed to create kms driver\n");
-		exit(0);
-	}
-
-	/* Set plane1 property */
-	i = drmModeObjectSetProperty(fd, plane1_id, DRM_MODE_OBJECT_PLANE, 7, plane1_z_val);
-	if (i < 0) {
-		printf("set plane1_z_val property failed\n");
-		exit(0);
-	}
-
-	i = drmModeObjectSetProperty(fd, plane1_id, DRM_MODE_OBJECT_PLANE, 8, plane1_glo_alp_val);
-	if (i < 0) {
-		printf("set plane1_glo_alp_val property failed\n");
-		exit(0);
-	}
-
-	i = drmModeObjectSetProperty(fd, plane1_id, DRM_MODE_OBJECT_PLANE, 9, plane1_pre_mul_alp_val);
-	if (i < 0) {
-		printf("set plane1_pre_mul_alp_val property failed\n");
-		exit(0);
-	}
-
-	/* Set plane2 property */
-	i = drmModeObjectSetProperty(fd, plane2_id, DRM_MODE_OBJECT_PLANE, 7, plane2_z_val);
-	if (i < 0) {
-		printf("set plane2_z_val property failed\n");
-		exit(0);
-	}
-
-	i = drmModeObjectSetProperty(fd, plane2_id, DRM_MODE_OBJECT_PLANE, 8, plane2_glo_alp_val);
-	if (i < 0) {
-		printf("set plane2_glo_alp_val property failed\n");
-		exit(0);
-	}
-
-	i = drmModeObjectSetProperty(fd, plane2_id, DRM_MODE_OBJECT_PLANE, 9, plane2_pre_mul_alp_val);
-	if (i < 0) {
-		printf("set plane2_pre_mul_alp_val property failed\n");
-		exit(0);
-	}
-
-
-	/* Planes */
-	/* create test buffer for plane1 */
-	plane_bo1 = create_test_buffer(kms, DRM_FORMAT_ARGB8888, p1_xres,
-				       p1_yres, handles1, pitches1, offsets1,
+	plane_bo1 = create_test_buffer(dev->kms, DRM_FORMAT_ARGB8888,
+				       dev->p1.xres, dev->p1.yres,
+				       handles1, pitches1, offsets1,
 				       PATTERN_TILES);
 	if (!plane_bo1) {
-		printf("create test buffer for plane1 failed\n");
+		error("create test buffer for plane1 failed\n");
 		exit(0);
 	}
 
-	/* just use single plane format for now.. */
-	if (drmModeAddFB2(fd, p1_xres, p1_yres, DRM_FORMAT_ARGB8888, handles1,
-			  pitches1, offsets1, &fb_id1, flags)) {
-		printf("failed to add fb for plane1\n");
+	if (drmModeAddFB2(dev->fd, dev->p1.xres, dev->p1.yres,
+			  DRM_FORMAT_ARGB8888, handles1, pitches1,
+			  offsets1, &dev->p1.fb_id, flags)) {
+		error("failed to add fb for plane1\n");
 		exit(0);
 	}
 
-	/* position of overlay window: top left corner, change value if
-	   you want to place it somewhere
-	*/
-	crtc_x = 0;
-	crtc_y = 0;
-
-	crtc_w = p1_xres; /* plane width to be displayed on LCD */
-	crtc_h = p1_yres; /* plane height to be displayed on LCD */
-
-	/* To achieve overlay, set plane before crtc */
-	/* note src coords (last 4 args) are in Q16 format */
-	if (drmModeSetPlane(fd, plane1_id, encoder->crtc_id, fb_id1, flags,
-			    crtc_x, crtc_y, crtc_w, crtc_h, 0, 0,
-			    p1_xres << 16, p1_yres << 16)) {
-		printf("failed to enable plane1\n");
+	if (drmModeSetPlane(dev->fd, dev->p1.id, dev->enc->crtc_id,
+			    dev->p1.fb_id, flags, dev->crtc_x, dev->crtc_y,
+			    dev->crtc_w, dev->crtc_h, 0, 0,
+			    dev->p1.xres << 16, dev->p1.yres << 16)) {
+		error("failed to enable plane1\n");
 		exit(0);
 	}
+}
 
+/**
+ *****************************************************************************
+ * @brief:  This function creates test buffer with pattern filled. Get frame
+ *	    buffer id for test buffer using drm API. Attach the plane2 to 
+ *	    lcd_crtc to draw another overlay window on lcd.
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void set_plane2(struct device *dev)
+{
+        uint32_t flags = 0;
+	uint32_t handles2[4], pitches2[4], offsets2[4];
+	struct kms_bo *plane_bo2;
 
-	/* create test buffer for plane2 */
-	plane_bo2 = create_test_buffer(kms, DRM_FORMAT_ARGB8888, p2_xres,
-				       p2_yres, handles2, pitches2, offsets2,
+	/* plane2 mode */
+	dev->p2.xres = 160;
+	dev->p2.yres = 120;
+
+	dev->crtc_x = 0;
+	dev->crtc_y = 0;
+
+	dev->crtc_w = dev->p2.xres;
+	dev->crtc_h = dev->p2.yres;
+
+	plane_bo2 = create_test_buffer(dev->kms, DRM_FORMAT_ARGB8888,
+				       dev->p2.xres, dev->p2.yres,
+				       handles2, pitches2, offsets2,
 				       PATTERN_SMPTE);
 	if (!plane_bo2) {
-		printf("create test buffer for plane2 failed\n");
+		error("create test buffer for plane2 failed\n");
 		exit(0);
 	}
 
-	/* just use single plane format for now.. */
-	if (drmModeAddFB2(fd, p2_xres, p2_yres, DRM_FORMAT_ARGB8888, handles2,
-			  pitches2, offsets2, &fb_id2, flags)) {
-		printf("failed to add fb for plane2\n");
+	if (drmModeAddFB2(dev->fd, dev->p2.xres, dev->p2.yres,
+			  DRM_FORMAT_ARGB8888, handles2, pitches2,
+			  offsets2, &dev->p2.fb_id, flags)) {
+		error("failed to add fb for plane2\n");
 		exit(0);
 	}
 
-	/* position of overlay window: top left corner, change value
-	   if you want to place it somewhere
-	*/
-	crtc_x = 0;
-	crtc_y = 0;
-
-	crtc_w = p2_xres; /* plane width to be displayed on LCD */
-	crtc_h = p2_yres; /* plane height to be displayed on LCD */
-
-	/* To achieve overlay, set plane before crtc */
-	/* note src coords (last 4 args) are in Q16 format */
-	if (drmModeSetPlane(fd, plane2_id, encoder->crtc_id, fb_id2, flags,
-			    crtc_x, crtc_y, crtc_w, crtc_h, 0, 0,
-			    p2_xres << 16, p2_yres << 16)) {
-		printf("failed to enable plane2\n");
+	if (drmModeSetPlane(dev->fd, dev->p2.id, dev->enc->crtc_id,
+			    dev->p2.fb_id, flags, dev->crtc_x, dev->crtc_y,
+			    dev->crtc_w, dev->crtc_h, 0, 0,
+			    dev->p2.xres << 16, dev->p2.yres << 16)) {
+		error("failed to enable plane2\n");
 		exit(0);
 	}
+}
 
+/**
+ *****************************************************************************
+ * @brief:  This function creates test buffer with pattern filled. Get frame
+ *	    buffer id for test buffer using drm API. Call to drmModeSetCrtc()
+ *	    will draw pattern on lcd along with two overlay windows, which are 
+ * 	    attached to it.
+ *
+ * @param:  dev  device pointer
+ *****************************************************************************
+*/
+static void set_crtc(struct device *dev)
+{
+        uint32_t flags = 0;
+	uint32_t handles3[4], pitches3[4], offsets3[4];
+	struct kms_bo *plane_bo3;
 
-	/* CRTC */
-	/* create test buffer for plane */
-	plane_bo3 = create_test_buffer(kms, DRM_FORMAT_XRGB8888, xres, yres,
+	plane_bo3 = create_test_buffer(dev->kms, DRM_FORMAT_XRGB8888,
+				       dev->xres, dev->yres,
 				       handles3, pitches3, offsets3,
 				       PATTERN_SMPTE);
 	if (!plane_bo3) {
-		printf("create test buffer for crtc failed\n");
+		error("create test buffer for crtc failed\n");
 		exit(0);
 	}
 
-	/* just use single plane format for now.. */
-	if (drmModeAddFB2(fd, xres, yres, DRM_FORMAT_XRGB8888, handles3,
-			  pitches3, offsets3, &fb_id3, flags)) {
-		printf("failed to add fb for crtc\n");
+	if (drmModeAddFB2(dev->fd, dev->xres, dev->yres,
+			  DRM_FORMAT_XRGB8888, handles3, pitches3,
+			  offsets3, &dev->fb_id3, flags)) {
+		error("failed to add fb for crtc\n");
 		exit(0);
 	}
 
-	/* set crtc, this will draw test pattern on screen */
-	if (drmModeSetCrtc(fd, encoder->crtc_id, fb_id3, 0, 0,
-			   &connector->connector_id, 1, &mode)) {
-		printf("failed to set mode!");
+	if (drmModeSetCrtc(dev->fd, dev->enc->crtc_id, dev->fb_id3,
+			   0, 0, &dev->con->connector_id, 1,
+			   &dev->mode)) {
+		error("failed to set mode!\n");
 		exit(0);
 	}
 
-	/* XXX: Actually check if this is needed */
-	drmModeDirtyFB(fd, fb_id3, 0, 0);
+}
 
-	/* wait for enter key */
+/**
+ *****************************************************************************
+ * @brief:  This function extracts the lcd mode from command line
+ *
+ * @param:  dev  device pointer
+ * @param:  p  	 optarg pointer
+ *****************************************************************************
+*/
+static int parse_mode(struct device *dev, const char *p)
+{
+	char *end;
+
+	dev->xres = strtoul(p, &end, 10);
+	if (*end != 'x')
+		return -1;
+
+	p = end + 1;
+	dev->yres = strtoul(p, &end, 10);
+
+	return 0;
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function extracts the plane1 properties from command line
+ *
+ * @param:  dev  device pointer
+ * @param:  p  	 optarg pointer
+ *****************************************************************************
+*/
+static int parse_plane1(struct device *dev, const char *p)
+{
+	if (sscanf(p, "%d:%d:%d:%d", &dev->p1.id, &dev->p1.z_val, 
+		       &dev->p1.glo_alp, &dev->p1.pre_mul_alp) != 4)
+		return -1;
+
+	return 0;
+}
+
+/**
+ *****************************************************************************
+ * @brief:  This function extracts the plane2 properties from command line
+ *
+ * @param:  dev  device pointer
+ * @param:  p  	 optarg pointer
+ *****************************************************************************
+*/
+static int parse_plane2(struct device *dev, const char *p)
+{
+	if (sscanf(p, "%d:%d:%d:%d", &dev->p2.id, &dev->p2.z_val, 
+		       &dev->p2.glo_alp, &dev->p2.pre_mul_alp) != 4)
+		return -1;
+
+	return 0;
+}
+
+static void usage()
+{
+	printf("Usage:\n");
+	printf("-s wxh\t\t\t\t\t\t- set lcd mode\n");
+	printf("-w plane_id:z-order:global_alpha:pre_mul_alpha\t");
+	printf("- set z-order & alpha blending\n\n");
+	printf("Run modetest app to find plane ids\n\n");
+	printf("Z-order value between 0 to 3\n\t");
+	printf("- lowest value for bottom\n\t");
+	printf("- highest value for top\n\n");
+	printf("Global alpha value between 0 to 255\n\t");
+	printf("0   - fully transparent\n\t");
+	printf("127 - semi transparent\n\t");
+	printf("255 - fully opaque\n\n");
+	printf("Pre multiplied alpha value\n\t");
+	printf("0 - source is not premultiplied with alpha\n\t");
+	printf("1 - source is premultiplied with alpha\n");
+	printf("ex:\n# drmzalpha -s 800x480 -w 15:1:255:1 -w 16:2:255:1\n\n");
+	exit(0);
+}
+
+static char optstr[] = "s:w:";
+
+int main(int argc, char *argv[])
+{
+	struct device dev;
+
+	uint32_t c, ret, plane_count = 0;
+	uint32_t oid;
+
+        memset(&dev, 0, sizeof dev);
+
+	while ((c = getopt(argc, argv, optstr)) != -1) {
+
+		switch (c) {
+		case 's':
+			if (parse_mode(&dev, optarg) < 0)
+				usage();
+			break;
+		case 'w':
+			if (!plane_count) {
+				if (parse_plane1(&dev, optarg) < 0)
+					usage();
+			} else {
+				if (parse_plane2(&dev, optarg) < 0)
+					usage();
+			}
+			plane_count++;
+			break;
+		default:
+			usage();
+			break;
+		}
+	}
+
+	if (argc < 7)
+		usage();
+
+	/* Open default dri device */
+	dev.fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+	if (dev.fd < 0) {
+		error("couldn't open /dev/dri/card0\n");
+		exit(0);
+	} else
+		printf("/dev/dri/card0 open success!\n");
+
+	/* Get drm resources */
+	dev.res = drmModeGetResources(dev.fd);
+	if (!dev.res) {
+		error("drmModeGetResources failed\n");
+		exit(0);
+	}
+
+	/* Get original mode and framebuffer id */
+	dev.crtc = drmModeGetCrtc(dev.fd, dev.res->crtcs[0]);
+	if (!dev.crtc) {
+		error("drmModeGetCrtc failed\n");
+		exit(0);
+	}
+	oid = dev.crtc->buffer_id;
+
+        get_drm_connector(&dev);
+        get_drm_encoder(&dev);
+        get_lcd_mode(&dev);
+
+	/* Create kms driver */
+	ret = kms_create(dev.fd, &dev.kms);
+	if (ret) {
+		error("failed to create kms driver\n");
+		exit(0);
+	}
+
+	/* Set plane1 properties */
+	set_z_order(&dev, dev.p1.id);
+	set_global_alpha(&dev, dev.p1.id);
+	set_pre_multiplied_alpha(&dev, dev.p1.id);
+
+	/* Set plane2 properties */
+	set_z_order(&dev, dev.p2.id);
+	set_global_alpha(&dev, dev.p2.id);
+	set_pre_multiplied_alpha(&dev, dev.p2.id);
+
+	/* To achieve overlay, set plane before crtc */
+	set_plane1(&dev);
+	set_plane2(&dev);
+	set_crtc(&dev);
+
+	drmModeDirtyFB(dev.fd, dev.fb_id3, 0, 0);
+
 	getchar();
 
-	/* undo the drm setup in the correct sequence */
-	drmModeSetCrtc(fd, encoder->crtc_id, oid, 0, 0, &connector->connector_id, 1, &(crtc->mode));
-	drmModeRmFB(fd, fb_id3);
-	drmModeRmFB(fd, fb_id2);
-	drmModeRmFB(fd, fb_id1);
-	drmModeFreeEncoder(encoder);
-	drmModeFreeConnector(connector);
-	drmModeFreeCrtc(crtc);
-	drmModeFreeResources(resources);
-	close(fd);
+	/* Undo the drm setup in the correct sequence */
+	drmModeSetCrtc(dev.fd, dev.enc->crtc_id, oid, 0, 0,
+		       &dev.con->connector_id, 1, &(dev.crtc->mode));
+	drmModeRmFB(dev.fd, dev.fb_id3);
+	drmModeRmFB(dev.fd, dev.p2.fb_id);
+	drmModeRmFB(dev.fd, dev.p1.fb_id);
+	drmModeFreeEncoder(dev.enc);
+	drmModeFreeConnector(dev.con);
+	drmModeFreeCrtc(dev.crtc);
+	drmModeFreeResources(dev.res);
+	close(dev.fd);
 
 	return 0;
 }
