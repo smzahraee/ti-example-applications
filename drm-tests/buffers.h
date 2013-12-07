@@ -27,6 +27,8 @@
 #ifndef __BUFFERS_H__
 #define __BUFFERS_H__
 
+#define error(fmt, arg...) printf("error:omapdrm:dss: " fmt, ## arg)
+
 struct kms_bo;
 struct kms_driver;
 
