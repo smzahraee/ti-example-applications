@@ -428,13 +428,16 @@ int main (
 	int	interlace = 0;
 	int	translen = 3;
 	struct	v4l2_control ctrl;
-	int field;
+	int 	field;
+	char    *video_dev = NULL;
 
-	if (argc != 11) {
+	if (argc < 12) {
 		printf (
 		"USAGE : <SRCfilename> <SRCWidth> <SRCHeight> <SRCFormat> "
 			"<DSTfilename> <DSTWidth> <DSTHeight> <DSTformat> "
-			"<interlace> <translen>\n");
+                        "<interlace> <translen> <dev-node> [num_frames]\n"
+                        "num_frames = 20 by default\n");
+
 
 		return 1;
 	}
@@ -442,6 +445,11 @@ int main (
 	fin		= open (argv[1], O_RDONLY);
 	srcWidth	= atoi (argv[2]);
 	srcHeight	= atoi (argv[3]);
+        video_dev       = argv[11];
+
+        if (argc == 13)
+                num_frames = atoi (argv[12]);
+
 	describeFormat (argv[4], srcWidth, srcHeight, &srcSize, &srcFourcc, &src_coplanar);
 
 	fout		= open (argv[5], O_WRONLY | O_CREAT | O_TRUNC, 777);
@@ -463,9 +471,9 @@ int main (
 		exit (1);
 	}
 
-	fd = open("/dev/video0",O_RDWR);
+	fd = open(video_dev,O_RDWR);
 	if(fd < 0) {
-		pexit("Can't open /device");
+		pexit("Can't open device");
 	}
 
 	/* Number of buffers to process in one transaction - translen */
