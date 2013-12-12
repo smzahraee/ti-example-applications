@@ -52,6 +52,8 @@
 #include <errno.h>
 
 #include <linux/videodev2.h>
+#include <linux/v4l2-controls.h>
+
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 
@@ -62,8 +64,13 @@
 
 #define V4L2_CID_TRANS_NUM_BUFS         (V4L2_CID_PRIVATE_BASE)
 
+/**<	Input  file descriptor				*/
 int	fin = -1;
+
+/**<	Output file descriptor				*/
 int	fout = -1;
+
+/**<	File descriptor for device			*/
 int	fd   = -1;
 
 /*
@@ -76,7 +83,8 @@ int describeFormat (
 	int	height,
 	int	*size,
 	int	*fourcc,
-	int	*coplanar)
+	int	*coplanar,
+	enum v4l2_colorspace *clrspc)
 {
 	*size   = -1;
 	*fourcc = -1;
@@ -84,56 +92,79 @@ int describeFormat (
 		*fourcc = V4L2_PIX_FMT_RGB24;
 		*size = height * width * 3;
 		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SRGB;
 
 	} else if (strcmp (format, "bgr24") == 0) {
 		*fourcc = V4L2_PIX_FMT_BGR24;
 		*size = height * width * 3;
 		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SRGB;
+
+	} else if (strcmp (format, "argb32") == 0) {
+		*fourcc = V4L2_PIX_FMT_RGB32;
+		*size = height * width * 4;
+		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SRGB;
+
+	} else if (strcmp (format, "abgr32") == 0) {
+		*fourcc = V4L2_PIX_FMT_BGR32;
+		*size = height * width * 4;
+		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SRGB;
 
 	} else if (strcmp (format, "yuv444") == 0) {
 		*fourcc = V4L2_PIX_FMT_YUV444;
 		*size = height * width * 3;
 		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SMPTE170M;
 
 	} else if (strcmp (format, "yvyu") == 0) {
 		*fourcc = V4L2_PIX_FMT_YVYU;
 		*size = height * width * 2;
 		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SMPTE170M;
 
 	} else if (strcmp (format, "yuyv") == 0) {
 		*fourcc = V4L2_PIX_FMT_YUYV;
 		*size = height * width * 2;
 		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SMPTE170M;
 
 	} else if (strcmp (format, "uyvy") == 0) {
 		*fourcc = V4L2_PIX_FMT_UYVY;
 		*size = height * width * 2;
 		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SMPTE170M;
 
 	} else if (strcmp (format, "vyuy") == 0) {
 		*fourcc = V4L2_PIX_FMT_VYUY;
 		*size = height * width * 2;
 		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SMPTE170M;
 
 	} else if (strcmp (format, "nv16") == 0) {
 		*fourcc = V4L2_PIX_FMT_NV16;
 		*size = height * width * 2;
 		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SMPTE170M;
 
 	} else if (strcmp (format, "nv61") == 0) {
 		*fourcc = V4L2_PIX_FMT_NV61;
 		*size = height * width * 2;
 		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SMPTE170M;
 
 	} else if (strcmp (format, "nv12") == 0) {
 		*fourcc = V4L2_PIX_FMT_NV12;
-		*size = height * width * 3 / 2;
+		*size = height * width * 1.5;
 		*coplanar = 1;
+		*clrspc = V4L2_COLORSPACE_SMPTE170M;
 
 	} else if (strcmp (format, "nv21") == 0) {
 		*fourcc = V4L2_PIX_FMT_NV21;
-		*size = height * width * 3 / 2;
+		*size = height * width * 1.5;
 		*coplanar = 1;
+		*clrspc = V4L2_COLORSPACE_SMPTE170M;
 
 	} else {
 		return 0;
@@ -153,6 +184,7 @@ int allocBuffers(
 	int	width,
 	int	height,
 	int	coplanar,
+	enum v4l2_colorspace clrspc,
 	int	*sizeimage_y,
 	int	*sizeimage_uv,
 	int	fourcc,
@@ -173,6 +205,7 @@ int allocBuffers(
 	fmt.fmt.pix_mp.width	= width;
 	fmt.fmt.pix_mp.height	= height;
 	fmt.fmt.pix_mp.pixelformat = fourcc;
+	fmt.fmt.pix_mp.colorspace = clrspc;
 
 	if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE && interlace)
 		fmt.fmt.pix_mp.field = V4L2_FIELD_ALTERNATE;
@@ -302,11 +335,17 @@ int queueAllBuffers(
 int queue(
 	int	type,
 	int	index,
-	int	field)
+	int	field,
+	int	size_y,
+	int size_uv)
 {
 	struct v4l2_buffer	buffer;
 	struct v4l2_plane	buf_planes[2];
 	int			ret = -1;
+
+	buf_planes[0].length = buf_planes[0].bytesused = size_y;
+	buf_planes[1].length = buf_planes[1].bytesused = size_uv;
+	buf_planes[0].data_offset = buf_planes[1].data_offset = 0;
 
 	memset(&buffer,0,sizeof(buffer));
 	buffer.type	= type;
@@ -417,6 +456,7 @@ int main (
 	int	srcSize    = 0, dstSize   = 0, srcSize_uv = 0, dstSize_uv = 0;
 	int	srcFourcc  = 0, dstFourcc = 0;
 	int	src_coplanar = 0, dst_coplanar = 0;
+	enum v4l2_colorspace	src_colorspace, dst_colorspace;
 
 	void	*srcBuffers[6];
 	void	*dstBuffers[6];
@@ -442,6 +482,7 @@ int main (
 		return 1;
 	}
 
+	/** Open input file in read only mode				*/
 	fin		= open (argv[1], O_RDONLY);
 	srcWidth	= atoi (argv[2]);
 	srcHeight	= atoi (argv[3]);
@@ -450,12 +491,13 @@ int main (
         if (argc == 13)
                 num_frames = atoi (argv[12]);
 
-	describeFormat (argv[4], srcWidth, srcHeight, &srcSize, &srcFourcc, &src_coplanar);
+	describeFormat (argv[4], srcWidth, srcHeight, &srcSize, &srcFourcc, &src_coplanar, &src_colorspace);
 
+	/** Open output file in write mode Create the file if not present	*/
 	fout		= open (argv[5], O_WRONLY | O_CREAT | O_TRUNC, 777);
 	dstWidth	= atoi (argv[6]);
 	dstHeight	= atoi (argv[7]);
-	describeFormat (argv[8], dstWidth, dstHeight, &dstSize, &dstFourcc, &dst_coplanar);
+	describeFormat (argv[8], dstWidth, dstHeight, &dstSize, &dstFourcc, &dst_coplanar, &dst_colorspace);
 
 	interlace = atoi (argv[9]);
 	translen = atoi (argv[10]);
@@ -470,6 +512,9 @@ int main (
 		/** TODO:Handle errors precisely		*/
 		exit (1);
 	}
+	/*************************************
+		Files are ready Now
+	*************************************/
 
 	fd = open(video_dev,O_RDWR);
 	if(fd < 0) {
@@ -486,20 +531,20 @@ int main (
 
 	/* Allocate buffers for CAPTURE and OUTPUT stream */
 	ret = allocBuffers (V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, srcWidth,
-		srcHeight, src_coplanar, &srcSize, &srcSize_uv, srcFourcc,
-		srcBuffers, srcBuffers_uv, &src_numbuf, interlace);
+		srcHeight, src_coplanar, src_colorspace, &srcSize, &srcSize_uv,
+		srcFourcc, srcBuffers, srcBuffers_uv, &src_numbuf, interlace);
 	if(ret < 0) {
-		pexit("Can't Allocate buffurs for OUTPUT device");
+		pexit("Cant Allocate buffurs for OUTPUT device\n");
 	}
 
 	ret = allocBuffers (V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, dstWidth,
-		dstHeight, dst_coplanar, &dstSize, &dstSize_uv, dstFourcc,
-		dstBuffers, dstBuffers_uv, &dst_numbuf, interlace);
+		dstHeight, dst_coplanar, dst_colorspace, &dstSize, &dstSize_uv,
+		dstFourcc, dstBuffers, dstBuffers_uv, &dst_numbuf, interlace);
 	if(ret < 0) {
-		pexit("Can't Allocate buffurs for CAPTURE device");
+		pexit("Cant Allocate buffurs for CAPTURE device\n");
 	}
 
-	/* Queue All empty buffers (Available to capture in) */
+	/**	Queue All empty buffers	(Available to capture in)	*/
 	ret = queueAllBuffers (V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, dst_numbuf);
 	if(ret < 0) {
 		pexit("Error queueing buffers for CAPTURE device\n");
@@ -508,8 +553,11 @@ int main (
 	printf ("Input  Buffers = %d each of size %d\nOutput Buffers = %d each of size %d\n",
 		src_numbuf, srcSize, dst_numbuf, dstSize);
 
-	/* Read into the OUTPUT buffers from fin file
-	 * and queue interlaced buffers to OUTPUT stream */
+	/*************************************
+		Driver is ready Now
+	*************************************/
+
+	/**	Read  into the OUTPUT  buffers from fin file	*/
 
 	field = V4L2_FIELD_TOP;
 	for (i = 0; i < src_numbuf; i++) {
@@ -517,12 +565,16 @@ int main (
 		if (src_coplanar)
 			do_read("UV plane", fin, srcBuffers_uv[i], srcSize_uv);
 
-		queue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, i, field);
+		queue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, i, field, srcSize, srcSize_uv);
 		if (field == V4L2_FIELD_TOP)
 			field = V4L2_FIELD_BOTTOM;
 		else
 			field = V4L2_FIELD_TOP;
 	}
+
+	/*************************************
+		Data is ready Now
+	*************************************/
 
 	streamON (V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 	streamON (V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
@@ -542,7 +594,7 @@ int main (
 			if (src_coplanar)
 				do_read ("UV plane", fin, srcBuffers_uv[buf.index], srcSize_uv);
 
-			queue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, buf.index, field);
+			queue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, buf.index, field, srcSize, srcSize_uv);
 			if (field == V4L2_FIELD_TOP)
 				field = V4L2_FIELD_BOTTOM;
 			else
@@ -559,7 +611,7 @@ int main (
 			do_write("UV plane", fout, dstBuffers_uv[buf.index], dstSize_uv);
 
 		if (!last)
-			queue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, buf.index, V4L2_FIELD_NONE);
+			queue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, buf.index, V4L2_FIELD_NONE, dstSize, dstSize_uv);
 
 		num_frames--;
 
