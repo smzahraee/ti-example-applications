@@ -30,10 +30,9 @@
  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 /* =============================================================================
- *  @file   MessageQZeroCpy.c
+ *  @file   MessageQZCpy.c
  *
  *  @brief  Sample application for MessageQ module between MPU and Remote Proc
- *          by Zero Copy Mechanism
  *
  *  ============================================================================
  */
@@ -60,8 +59,12 @@
 
 /* App defines: Must match on remote proc side: */
 #define HEAPID                      0u
-#define SLAVE_MESSAGEQNAME          "SLAVE"
-#define HOST_MESSAGEQNAME           "HOST"
+#define A15_HANDSHAKE_MQNAME     "A15_RECEIVER_HANDSHAKE"
+#define A15_MESSAGEQNAME            "A15"
+#define M4_MESSAGEQNAME             "M4"
+#define SLAVE_MESSAGEQNAME	"SLAVE"
+#define HOST_MESSAGEQNAME	"HOST"
+
 
 /** ============================================================================
  *  Macros and types
@@ -74,17 +77,15 @@
 /*OMAP5 remoteproc1:IPU:proc id 1*/
 #define COREPROC1					1u
 
-#define  NUM_MESSAGES_DFLT 25200
-#define  NUM_THREADS_DFLT 4
-#define  NUM_MSGSIZE_DFLT 4
-#define  MAX_NUM_THREADS  50
+/*Before increasing the below value handle the thrDirection variable capacity in SyncMsg 
+ and check the same on the BIOS side code too*/
+#define  MAX_NUM_THREADS  100
 
+#define MAX_INPUT_STR_SIZE                      (128)
 /** ============================================================================
  *  Globals
  *  ============================================================================
  */
-static Int     numMessages, numThreads, numMsgSize ,procNum;
-static unsigned int   bufferPtr, bufferPtrRemoteAddr, bufferPtrSize;
 
 /*!
  *  @brief   structure
@@ -94,12 +95,6 @@ typedef struct {
     uint32_t *  inBuf; /* This is the shared region space address */
 } Mx_Compute;
 
-struct thread_info {    /* Used as argument to thread_start() */
-    pthread_t thread_id;        /* ID returned by pthread_create() */
-    int       thread_num;       /* Application-defined thread # */
-    unsigned int boBufPayloadPtr; /*Shared Region pointer address per thread*/
-    unsigned int boBufPayloadSize; /*Shared Region Size for this index of address*/
-};
 
 typedef struct RemoteBufSyncMsg {
     MessageQ_MsgHeader header;
@@ -110,12 +105,49 @@ typedef struct RemoteBufSyncMsg {
 
 typedef struct SyncMsg {
     MessageQ_MsgHeader header; /* This is a mandatory requirement for MessageQ_alloc */
-    unsigned int numChannels; /* Indicates the number of threads to the other core: Handshake */
+    unsigned int boBufPayloadPtr; /*Shared Region pointer address to be exchanged using MessageQ*/
+    unsigned int boBufPayloadSize; /*Shared Region pointer address  Size*/
+    unsigned int numThreads; /* Indicates the number of threads to the other core: Handshake */
     unsigned int numMessages; /* Indicates the number of messages: Handshake */
+    unsigned int numWaitTime; /* Indicates the sleep/wait between send messages: Handshake */
     unsigned int payloadSize; /* Indicates the size of the payload which will be carried by each message: Handshake */
+    unsigned int procId; /* Indicates the size of the payload which will be carried by each message: Handshake */
+    unsigned int thrDirection; /* Used a double to use each bit field for a thread. hence restriction of 64 threads*/
 } SyncMsg;
 
-static void * pingThreadFxn(void *arg);
+enum ThreadDirection {
+	unidirectional_send = 0,
+	unidirectional_recv,
+	bidirectional
+};
+
+typedef struct thread_info {    /* Used as argument to thread_start() */
+    pthread_t thread_id;        /* ID returned by pthread_create() */
+    unsigned int thread_num;       /* Application-defined thread # */
+    int config_param; /* This will define the communication direction of this thread.*/
+    unsigned int numMessages; /* Indicates the number of messages: Handshake */
+    unsigned int numWaitTime; /* Indicates the sleep/wait between send messages: Handshake */
+    unsigned int payloadSize; /* Indicates the size of the payload which will be carried by each message: Handshake */
+    unsigned int procId; /* Indicates the procid for this thread: Handshake */
+    unsigned int boBufPayloadPtr; /*Shared Region pointer address per thread*/
+    unsigned int boBufPayloadSize; /*Shared Region Size for this index of address*/
+}thrConfigs;
+
+typedef struct stProPerfConfig {
+	int procId;
+	int numThreads;
+	int bufferPtr;
+	int bufferPtrRemoteAddr;
+	int bufferPtrSize;
+	int totalReqPayloadSize;
+	thrConfigs *pThrConfig;
+	Mx_Compute *compute;
+	SyncMsg stSyncMsg;
+}stProPerfConfig;
+
+
+static void * pingThreadFxn_uni_send(void *arg);
+static void * pingThreadFxn_uni_recv(void *arg);
 
 struct omap_device *dev = NULL;
 struct omap_bo *compute_bo = NULL;
@@ -261,9 +293,8 @@ long diff(struct timespec dstart, struct timespec dend)
     return (temp.tv_sec * 1000000UL + temp.tv_nsec / 1000);
 }
 
-static int callCompute_Linux(uint32_t *mmInBufPtr, uint32_t *mmRemoteInBufPtr, uint32_t *mmInBufPtrSize)
+static int callCompute_Linux(stProPerfConfig *stExpConfig)
 {
-    Mx_Compute *compute = NULL;
     uint32_t * inBufPtr = NULL;
     int status = 0;
     int size;
@@ -288,23 +319,23 @@ static int callCompute_Linux(uint32_t *mmInBufPtr, uint32_t *mmRemoteInBufPtr, u
     /* allocate a compute structure in shared memory and get a pointer */
     compute_bo = omap_bo_new(dev, sizeof(Mx_Compute), OMAP_BO_WC);
     if (compute_bo) {
-        compute = (Mx_Compute *)omap_bo_map(compute_bo);
+        stExpConfig->compute = (Mx_Compute *)omap_bo_map(compute_bo);
     }
     else {
         fprintf(stderr, "failed to allocate omap_bo\n");
     }
 
-    if (compute == NULL) {
+    if (stExpConfig->compute == NULL) {
         fprintf(stderr, "failed to map omap_bo to user space\n");
         return -1;
     }
 
     /* initialize compute structure */
-    compute->size = (numMsgSize/(sizeof(uint32_t))); /* [TODO]Assumption: user_payload_size/sizeof(uint32_t) */
-    compute->inBuf = NULL;
+    stExpConfig->compute->size = (stExpConfig->totalReqPayloadSize/(sizeof(uint32_t))); /* [TODO]Assumption: user_payload_size/sizeof(uint32_t) */
+    stExpConfig->compute->inBuf = NULL;
 
     /* allocate an input buffer in shared memory */
-    size = compute->size * sizeof(uint32_t);
+    size = stExpConfig->compute->size * sizeof(uint32_t);
     inBuf_bo = omap_bo_new(dev, size, OMAP_BO_WC);
     if (inBuf_bo) {
         inBufPtr = (uint32_t *)omap_bo_map(inBuf_bo);
@@ -320,19 +351,19 @@ static int callCompute_Linux(uint32_t *mmInBufPtr, uint32_t *mmRemoteInBufPtr, u
     }
 
     /* fill input buffer with seed value */
-    for (i = 0; i < compute->size; i++) {
+    for (i = 0; i < stExpConfig->compute->size; i++) {
         inBufPtr[i] = 0xbeefdead;
     }
 
-    compute->inBuf = (uint32_t *)inBufPtr;
+    stExpConfig->compute->inBuf = (uint32_t *)inBufPtr;
 
     /* print some debug info */
 #if PRINT_DEBUG    
-    printf("compute->size=0x%x\n", compute->size);
-    printf("compute->inBuf=0x%x\n", (unsigned int)compute->inBuf);
+    printf("compute->size=0x%x\n", stExpConfig->compute->size);
+    printf("compute->inBuf=0x%x\n", (unsigned int)stExpConfig->compute->inBuf);
 #endif
     /* process the buffer */
-    ret = Mx_compute_Linux(compute, omap_bo_dmabuf(compute_bo),
+    ret = Mx_compute_Linux(stExpConfig->compute, omap_bo_dmabuf(compute_bo),
                                     omap_bo_dmabuf(inBuf_bo));
 
     if (ret < 0) {
@@ -342,13 +373,13 @@ static int callCompute_Linux(uint32_t *mmInBufPtr, uint32_t *mmRemoteInBufPtr, u
     }
 #if PRINT_DEBUG
     printf("After Mx_compute_Linux mmrpc call \n");
-    printf("compute->inBuf=0x%x\n", (unsigned int)compute->inBuf);
+    printf("compute->inBuf=0x%x\n", (unsigned int)stExpConfig->compute->inBuf);
     printf("compute->inBuf[0]=0x%x\n",
-            (unsigned int)compute->inBuf[0]);
+            (unsigned int)stExpConfig->compute->inBuf[0]);
 #endif
     /*This checks Data Transaction at mmrpc level;check the output buffer */
    /* starting at index 1 because 0th index contains translated address of inBufPtr*/
-    for (i = 1; i < compute->size; i++) {
+    for (i = 1; i < stExpConfig->compute->size; i++) {
         if (inBufPtr[i] != 0xdeadbeef) {
             status = 1;
             printf("Error: incorrect InBuf\n");
@@ -356,42 +387,41 @@ static int callCompute_Linux(uint32_t *mmInBufPtr, uint32_t *mmRemoteInBufPtr, u
         }
     }
 
-    *mmInBufPtr = (unsigned int)compute->inBuf;
-    *mmRemoteInBufPtr = (unsigned int)compute->inBuf[0];
-    *mmInBufPtrSize = size;
+    stExpConfig->bufferPtr = (unsigned int)stExpConfig->compute->inBuf;
+    stExpConfig->bufferPtrRemoteAddr = (unsigned int)stExpConfig->compute->inBuf[0];
+    stExpConfig->bufferPtrSize = stExpConfig->compute->size * sizeof(uint32_t);
 
     return (status);
 }
 
-Int MessageQApp_handshake(UInt32 numChannels, UInt32 numMessages, UInt32 payloadSize, UInt16 procId)
+Int MessageQApp_handshake(stProPerfConfig stExpConfig)
 {
-    Int32                    status = 0;
+    Int32                    i = 0, status = 0;
     MessageQ_Msg             msg = NULL;
     MessageQ_Params          msgParams;
     MessageQ_QueueId         queueId = MessageQ_INVALIDMESSAGEQ;
     MessageQ_Handle          msgqHandle;
     char                     remoteQueueName[64];
+    int tempOffsetCtr = 0;
 
 #if PRINT_DEBUG
     printf("Entered MessageQApp_handshake\n");
 #endif
-
+    
     /* Create the local Message Queue for receiving. */
     MessageQ_Params_init(&msgParams);
-    msgqHandle = MessageQ_create(HOST_MESSAGEQNAME, &msgParams);
+    msgqHandle = MessageQ_create(A15_HANDSHAKE_MQNAME, &msgParams);
     if (msgqHandle == NULL) {
         printf("Error in MessageQ_create\n");
         goto exit;
     }
 #if PRINT_DEBUG
     else {
-        printf("Local MessageQId: 0x%x\n", MessageQ_getQueueId(msgqHandle));
+        printf("%s,Local MessageQId: 0x%x\n",A15_HANDSHAKE_MQNAME, MessageQ_getQueueId(msgqHandle));
     }
 #endif
     sprintf(remoteQueueName, "%s_%s", SLAVE_MESSAGEQNAME,
-             MultiProc_getName(procId));
-
-    //printf("%s:%d remoteQueueName:%s\n",__func__,__LINE__,remoteQueueName);
+             MultiProc_getName(stExpConfig.procId));
     /* Poll until remote side has it's messageQ created before we send: */
     do {
         status = MessageQ_open(remoteQueueName, &queueId);
@@ -404,33 +434,70 @@ Int MessageQApp_handshake(UInt32 numChannels, UInt32 numMessages, UInt32 payload
     }
 #if PRINT_DEBUG
     else {
-        printf("Remote queueId  [0x%x]\n", queueId);
+        printf("%s Remote queueId  [0x%x]\n",remoteQueueName, queueId);
     }
 #endif
 
     msg = MessageQ_alloc(HEAPID, sizeof(SyncMsg));
     if (msg == NULL) {
         printf("Error in MessageQ_alloc\n");
-        MessageQ_close(&queueId);
-        goto cleanup;
+        goto close_cleanup;
     }
-
+    
     /* handshake with remote to set the number of loops */
     MessageQ_setReplyQueue(msgqHandle, msg);
-    ((SyncMsg *)msg)->numMessages = numMessages;
-    ((SyncMsg *)msg)->numChannels = numChannels;
-    ((SyncMsg *)msg)->payloadSize = payloadSize;
-    
-    MessageQ_put(queueId, msg);
-    MessageQ_get(msgqHandle, &msg, MessageQ_FOREVER);
+
+    /* Ensuring first I handshake no. of threads/tasks so that a loop can be created at bios side*/
+    ((SyncMsg *)msg)->numThreads = stExpConfig.numThreads;
+    status = MessageQ_put(queueId, msg);
+    if (status < 0) {
+        printf("MessageQ_put handshake failed [%d]\n", status);
+        goto free_cleanup;
+    }
+
+    status = MessageQ_get(msgqHandle, &msg, MessageQ_FOREVER);
+    if (status < 0) {
+            printf ("Error in MessageQ_get [0x%x]\n", status);
+        }
+   else {
+#if PRINT_DEBUG
+    printf("Exchanged thread count handshake with remote processor %s...\n",
+           MultiProc_getName(stExpConfig.procId));
+#endif
+	}
+
+	for (i = 0; i < stExpConfig.numThreads; i++) 
+	{
+		((SyncMsg *)msg)->boBufPayloadPtr = stExpConfig.bufferPtrRemoteAddr + tempOffsetCtr;
+		((SyncMsg *)msg)->boBufPayloadSize = stExpConfig.pThrConfig[i].payloadSize;
+		((SyncMsg *)msg)->numMessages = stExpConfig.pThrConfig[i].numMessages;
+		((SyncMsg *)msg)->numWaitTime = stExpConfig.pThrConfig[i].numWaitTime;
+		((SyncMsg *)msg)->payloadSize = stExpConfig.pThrConfig[i].payloadSize;
+		((SyncMsg *)msg)->procId = stExpConfig.pThrConfig[i].procId; 
+		((SyncMsg *)msg)->thrDirection = stExpConfig.pThrConfig[i].config_param;
+      		tempOffsetCtr += stExpConfig.pThrConfig[i].payloadSize;
+		status = MessageQ_put(queueId, msg);
+		if (status < 0) {
+			printf("MessageQ_put handshake failed [%d]\n", status);
+			goto free_cleanup;
+		}
+
+		status = MessageQ_get(msgqHandle, &msg, MessageQ_FOREVER);
+	        if (status < 0) {
+			printf ("Error in MessageQ_get [0x%x]\n", status);
+			break;
+	        }
+  	}
+
 #if PRINT_DEBUG
     printf("Exchanged handshake with remote processor %s...\n",
-           MultiProc_getName(procId));
+           MultiProc_getName(stExpConfig.procId));
 #endif
 
+free_cleanup:
     MessageQ_free(msg);
+close_cleanup:
     MessageQ_close(&queueId);
-
 cleanup:
     /* Clean-up */
     status = MessageQ_delete(&msgqHandle);
@@ -445,8 +512,66 @@ exit:
     return (status);
 }
 
+static Void * pingThreadFxn_uni_send(void *arg)
+{
+    struct thread_info pingThreadFxnData = *(struct thread_info *)arg;   
+    Int                      threadNum = 0;
+    Int32                    status     = 0;
+    MessageQ_Msg             msg        = NULL;
+    UInt16                   i;
+    MessageQ_QueueId         queueId = MessageQ_INVALIDMESSAGEQ;
 
-static Void * pingThreadFxn(void *arg)
+    char             remoteQueueName[64];
+
+    threadNum = pingThreadFxnData.thread_num;
+    sprintf(remoteQueueName, "%s_RECV_MQ_%d", M4_MESSAGEQNAME, threadNum );
+    
+    //printf("pingThreadFxn This thread sending to num: %d, Name: %s\n", threadNum,remoteQueueName);
+
+    /* Poll until remote side has it's messageQ created before we send: */
+    do {
+        status = MessageQ_open (remoteQueueName, &queueId);
+        sleep (1);
+    } while (status == MessageQ_E_NOTFOUND);
+    if (status < 0) {
+        printf ("Error in MessageQ_open [0x%x]\n", status);
+	return ((void *)status);
+    }
+#if PRINT_DEBUG
+    else {
+        printf ("thread: %d, Remote queue: %s, QId: 0x%x\n",
+                 threadNum, remoteQueueName, queueId);
+    }
+    printf ("\nthread: %d: Exchanging messages with remote processor...\n",
+            threadNum);
+#endif
+    for (i = 0 ; i < pingThreadFxnData.numMessages ; i++) {
+        /* Allocate message. */
+        msg = MessageQ_alloc (HEAPID, sizeof(RemoteBufSyncMsg));
+        if (msg == NULL) {
+            printf ("Error in MessageQ_alloc\n");
+            break;
+        }
+
+        MessageQ_setMsgId (msg, i);
+
+        /* Have the remote proc reply to this message queue */
+      ((RemoteBufSyncMsg *)msg)->boBufPayloadPtr = pingThreadFxnData.boBufPayloadPtr;
+      ((RemoteBufSyncMsg *)msg)->boBufPayloadSize = pingThreadFxnData.boBufPayloadSize;
+
+        status = MessageQ_put (queueId, msg);
+        if (status < 0) {
+            printf ("Error in MessageQ_put [0x%x]\n", status);
+            break;
+        }
+        usleep (pingThreadFxnData.numWaitTime); /*Sleep for 2.5ms*/
+    }
+    
+    MessageQ_close (&queueId);
+    return ((void *)status);
+}
+
+static Void * pingThreadFxn_uni_recv(void *arg)
 {
     struct thread_info pingThreadFxnData = *(struct thread_info *)arg;   
     Int                      threadNum = 0;
@@ -455,18 +580,14 @@ static Void * pingThreadFxn(void *arg)
     MessageQ_Params          msgParams;
     UInt16                   i;
     MessageQ_Handle          handle;
-    MessageQ_QueueId         queueId = MessageQ_INVALIDMESSAGEQ;
 
-    char             remoteQueueName[64];
     char             hostQueueName[64];
 
     threadNum = pingThreadFxnData.thread_num;
-    sprintf(remoteQueueName, "%s_%d", SLAVE_MESSAGEQNAME, threadNum );
-    sprintf(hostQueueName,   "%s_%d", HOST_MESSAGEQNAME,  threadNum );
+    sprintf(hostQueueName,   "%s_RECV_MQ_%d", A15_MESSAGEQNAME,  threadNum );
 
-#if PRINT_DEBUG
-    printf("pingThreadFxn This thread num: %d\n", threadNum);
-#endif
+    //printf("pingThreadFxn_uni_recv This thread num: %d from Name:%s  \n", threadNum,hostQueueName);
+    
     /* Create the local Message Queue for receiving. */
     MessageQ_Params_init (&msgParams);
     handle = MessageQ_create (hostQueueName, &msgParams);
@@ -480,47 +601,7 @@ static Void * pingThreadFxn(void *arg)
             threadNum, hostQueueName, MessageQ_getQueueId(handle));
     }
 #endif
-
-    /* Poll until remote side has it's messageQ created before we send: */
-    do {
-        status = MessageQ_open (remoteQueueName, &queueId);
-        sleep (1);
-    } while (status == MessageQ_E_NOTFOUND);
-    if (status < 0) {
-        printf ("Error in MessageQ_open [0x%x]\n", status);
-        goto cleanup;
-    }
-#if PRINT_DEBUG
-    else {
-        printf ("thread: %d, Remote queue: %s, QId: 0x%x\n",
-                 threadNum, remoteQueueName, queueId);
-    }
-
-    printf ("\nthread: %d: Exchanging messages with remote processor...\n",
-            threadNum);
-#endif
-
-    for (i = 0 ; i < numMessages ; i++) {
-        /* Allocate message. */
-        msg = MessageQ_alloc (HEAPID, sizeof(RemoteBufSyncMsg));
-        if (msg == NULL) {
-            printf ("Error in MessageQ_alloc\n");
-            break;
-        }
-
-        MessageQ_setMsgId (msg, i);
-
-        /* Have the remote proc reply to this message queue */
-        MessageQ_setReplyQueue (handle, msg);
-      ((RemoteBufSyncMsg *)msg)->boBufPayloadPtr = pingThreadFxnData.boBufPayloadPtr;
-      ((RemoteBufSyncMsg *)msg)->boBufPayloadSize = pingThreadFxnData.boBufPayloadSize;
-
-        status = MessageQ_put (queueId, msg);
-        if (status < 0) {
-            printf ("Error in MessageQ_put [0x%x]\n", status);
-            break;
-        }
-
+    for (i = 0 ; i < pingThreadFxnData.numMessages ; i++) {
         status = MessageQ_get(handle, &msg, MessageQ_FOREVER);
         if (status < 0) {
             printf ("Error in MessageQ_get [0x%x]\n", status);
@@ -538,10 +619,7 @@ static Void * pingThreadFxn(void *arg)
             status = MessageQ_free (msg);
        }
     }
-    
-    MessageQ_close (&queueId);
 
-cleanup:
     /* Clean-up */
     status = MessageQ_delete (&handle);
     if (status < 0) {
@@ -552,22 +630,23 @@ exit:
     return ((void *)status);
 }
 
-Int dataTransactFxn()
+
+Int dataTransactFxn(stProPerfConfig stExpConfig)
 {
     Int32                    status     = 0;
-    MessageQ_Msg             msg        = NULL;
+    MessageQ_Msg             msg1        = NULL;
     MessageQ_Params          msgParams;
-    UInt16                   i;
+    Int32                    i;
     MessageQ_Handle          handle;
     MessageQ_QueueId         queueId = MessageQ_INVALIDMESSAGEQ;
 
     char             remoteQueueName[64];
     char             hostQueueName[64];
 
-    sprintf(remoteQueueName, "%s_%d", SLAVE_MESSAGEQNAME, 0 );
-    sprintf(hostQueueName,   "%s_%d", HOST_MESSAGEQNAME,  0 );
+    sprintf(remoteQueueName, "%s_%d", SLAVE_MESSAGEQNAME,0);
+    sprintf(hostQueueName,   "%s_%d", HOST_MESSAGEQNAME,0);
 
-    printf("dataTransactFxn: This function is a test to showcase data transaction \n");
+    printf("dataTransactFxn: This function is a test to showcase data transaction\n");
 
     /* Create the local Message Queue for receiving. */
     MessageQ_Params_init (&msgParams);
@@ -576,7 +655,6 @@ Int dataTransactFxn()
         printf ("Error in MessageQ_create\n");
         goto exit;
     }
-
     /* Poll until remote side has it's messageQ created before we send: */
     do {
         status = MessageQ_open (remoteQueueName, &queueId);
@@ -588,49 +666,49 @@ Int dataTransactFxn()
     }
 
     /* Allocate message. */
-    msg = MessageQ_alloc (HEAPID, sizeof(RemoteBufSyncMsg));
-    if (msg == NULL) {
+    msg1 = MessageQ_alloc (HEAPID, sizeof(RemoteBufSyncMsg));
+    if (msg1 == NULL) {
         printf ("Error in MessageQ_alloc\n");
         goto cleanup;
     }
 
-    MessageQ_setMsgId (msg, 1);/* Set a random number to associate with this message*/
+    MessageQ_setMsgId (msg1, 1);/* Set a random number to associate with this message*/
 
-    for (i = 0; i < (bufferPtrSize/sizeof(uint32_t)); i++) {
-        ((unsigned int *)bufferPtr)[i] = 0xbeefdead;
+    for (i = 0; i < (stExpConfig.bufferPtrSize/sizeof(uint32_t)); i++) {
+        ((unsigned int *)stExpConfig.bufferPtr)[i] = 0xbeefdead;
     }
 
     /* Have the rem te proc reply to this message queue */
-    MessageQ_setReplyQueue (handle, msg);
-    ((RemoteBufSyncMsg *)msg)->boBufPayloadPtr = bufferPtrRemoteAddr;
-    ((RemoteBufSyncMsg *)msg)->boBufPayloadSize = bufferPtrSize;
+    MessageQ_setReplyQueue (handle, msg1);
+    ((RemoteBufSyncMsg *)msg1)->boBufPayloadPtr = stExpConfig.bufferPtrRemoteAddr;
+    ((RemoteBufSyncMsg *)msg1)->boBufPayloadSize = stExpConfig.bufferPtrSize;
 
-    status = MessageQ_put (queueId, msg);
+    status = MessageQ_put (queueId, msg1);
     if (status < 0) {
         printf ("Error in MessageQ_put [0x%x]\n", status);
         goto cleanup;
     }
 
-    status = MessageQ_get(handle, &msg, MessageQ_FOREVER);
+    status = MessageQ_get(handle, &msg1, MessageQ_FOREVER);
     if (status < 0) {
        printf ("Error in MessageQ_get [0x%x]\n", status);
        goto cleanup;
     }
     else {
-       for (i = 0; i < (bufferPtrSize/sizeof(uint32_t)); i++) {
-              if (((unsigned int *)bufferPtr)[i] != 0xdeadbeef) {
+       for (i = 0; i < (stExpConfig.bufferPtrSize/sizeof(uint32_t)); i++) {
+              if (((unsigned int *)stExpConfig.bufferPtr)[i] != 0xdeadbeef) {
               status = 1;
               printf ("Data integrity failure!\n"
                 "    Expected %s\n"
                 "    Received 0x%x\n",
-                "0xdeadbeef", ((unsigned int *)bufferPtr)[i]);
+                "0xdeadbeef", ((unsigned int *)stExpConfig.bufferPtr)[i]);
               break;
         }
     }
     if(status != 1)
         printf("%s:Test Pass\n",__func__);
     /* Validate the returned message. */
-    status = MessageQ_free (msg);
+    status = MessageQ_free (msg1);
    }
 
     MessageQ_close (&queueId);
@@ -646,69 +724,217 @@ exit:
     return status;
 }
 
+#define printd(fmt, ...) \
+	do { if (debug) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+
+int debug=0;
+
+struct config
+{
+	int direction;
+	int interval;
+	int msgSize;
+	int msgCount;
+	int procID;
+};
+
+struct config xyz[MAX_NUM_THREADS];/* [TODO]: Remove Hardcode, Assuming for the time being max threads 100*/
+int linecount = 0;
+
+char keylist[5][50] = {
+	"direction",
+	"msgSize",
+	"msgCount",
+	"interval",
+	"procID"
+};
+
+int validatekey(char *ptr)
+{
+	int i;
+	for(i=0; i<5; i++)
+		if(strcmp(ptr, keylist[i]) == 0)
+			return 0;
+
+	return 1;
+}
+
+/*
+direction: 0-Send, 1-Recv
+msgSize: in bytes(Should be 4 bytes aligned)
+msgCount: number of messages to be exchanged
+interval: in microsecs(us)
+procID: core, Hardcoded to IPU2 for the time being
+
+Sample contents of cfg file:");
+
+#Thread 1
+direction=0, msgSize=6400, msgCount=400, interval=2500, procID=1
+#Thread 2
+direction=1, msgSize=640, msgCount=800, interval=2500, procID=1
+
+*/
+#define PRINTEXIT {printusage(); exit(1);}
+
+void printusage() {
+    printf("\n --------------------------------------------");
+    printf("\n INCORRECT USAGE !");
+    printf("\n --------------------------------------------");
+    printf("\n ./MessageQZCpy -f <CFG file path>");
+    printf("\n");
+    printf("\n -f : MANDATORY  : Configuration file which contains use-case configurations");
+    printf("\n");
+    printf("\n Sample contents of cfg file:");
+    printf("\n #Thread 1");
+    printf("\n direction=0, msgSize=6400, msgCount=400, interval=2500, procID=1");
+    printf("\n #Thread 2");
+    printf("\n direction=1, msgSize=640, msgCount=800, interval=2500, procID=1");
+    printf("\n");
+}
+
+
+void add_key_value(char *key, int value)
+{
+    if((linecount + 1) < MAX_NUM_THREADS)
+    {
+	printd("%s", "Inside add_key_value\n");
+	
+	if(strcmp(key, "direction") == 0)
+		xyz[linecount].direction = value;
+	else if(strcmp(key, "interval") == 0)
+		xyz[linecount].interval = value;
+	else if(strcmp(key, "msgSize") == 0)
+		xyz[linecount].msgSize = value;
+	else if(strcmp(key, "msgCount") == 0)
+		xyz[linecount].msgCount = value;
+	else if(strcmp(key, "procID") == 0)
+		xyz[linecount].procID = value;
+	else
+		printd("%s", "********** UNKNOWN**********");
+    }
+    else
+    {
+	printf("Max threads limit(%d) exceeded\n",MAX_NUM_THREADS);
+	exit(1);
+    }
+}
 
 int main (int argc, char ** argv)
 {
-    struct thread_info threads[MAX_NUM_THREADS]={{0}};
-    int ret,i, tempnummsg;
-    struct timespec start, end;
-    long                     elapsed;
-    Int32 status = 0;
-    tempnummsg = 0;
+	stProPerfConfig stMQConfig = {0};
 
-    bufferPtr = 0;
-    bufferPtrRemoteAddr = 0;
+	int ret,i, tempOffsetCtr = 0;
+	struct timespec start, end;
+        long elapsed;
+	FILE *fp;
+	char line[512];
+	char tokens[6][512];
+	char path[100];
+	int  temp, flag = 0;
+	char *keyvalue, *pair;
+	char key[100];
 
-    /* Parse Args: */
-    numMessages = NUM_MESSAGES_DFLT;
-    numThreads = NUM_THREADS_DFLT;
-    numMsgSize = NUM_MSGSIZE_DFLT;
-    procNum = COREPROC1;
-    switch (argc) {
-        case 1:
-           /* use defaults */
-           break;
-        case 2:
-           numThreads = atoi(argv[1]);
-           break;
-        case 3:
-           numThreads = atoi(argv[1]);
-           numMessages   = atoi(argv[2]);
-           break;
-        case 4:
-           numThreads = atoi(argv[1]);
-           numMessages   = atoi(argv[2]);
-           numMsgSize  = atoi(argv[3]);
-           break;
-        case 5:
-           numThreads = atoi(argv[1]);
-           numMessages   = atoi(argv[2]);
-           numMsgSize  = atoi(argv[3]);
-           procNum = atoi(argv[4]);
-           break;
-        default:
-           printf("Usage: %s [<numThreads>] [<numMessages>] [<numMsgPayloadSize>] [<Proc Id #]>\n",
-                   argv[0]);
-           printf("\tDefaults: numThreads: 4, numMessages: 25200, numMsgSize: 4, IPU Proc Id: 1\n");
-           printf("\tMax Threads: 50\n");
-           exit(0);
-    }
+	Int32 status = 0;
+	int option;
 
-    if(numMsgSize & 0x3)
-    {
-        printf("each message payload size should be 4bytes aligned\n");
-        numMsgSize = NUM_MSGSIZE_DFLT;
-    }
+
+    /* Initialize this to turn off verbosity of getopt */
+    opterr = 0;
     
-    printf("Using: %d Threads, Messages: %d, Message Size:%d bytes, Message Payload Size(bytes):%d, ProcId %d\n", 
-          numThreads, 
-          numMessages, 
-          sizeof(RemoteBufSyncMsg),
-          numMsgSize, 
-          procNum);
+    while ((option = getopt (argc, argv, "f:")) != -1)
+	{
+		switch(option)
+		{
+			case 'f':
+				strcpy(path, optarg);
+				break;
+			default:
+				printf("Invalid option.. Exiting\n");
+				PRINTEXIT
+		}
+	}
 
-    tempnummsg = numMsgSize * numThreads;
-    numMsgSize = tempnummsg;
+	fp = fopen(path, "r");
+	if (fp == NULL) {
+		fprintf(stderr, "couldn't open the specified file\n");
+		PRINTEXIT
+	}
+
+	while (fgets(line, sizeof line, fp)) {
+		printd("Line is = %s", line);
+
+		if (line[0] == '#' || line[0] == '\n') {
+			continue;
+		}
+
+		memset(tokens, 0, sizeof(tokens));
+		i = 0;
+
+		pair = strtok (line," ,");
+		while (pair != NULL)
+		{
+			printd ("\tPair is = %s\n",pair);
+			strcpy(tokens[i++], pair);
+			pair = strtok (NULL, " ,.-");
+		}
+
+		for(temp=0; temp< i; temp++)
+		{
+			printd("Line %d: %s\n", temp, tokens[temp]);
+			keyvalue = strtok (tokens[temp]," =");
+			while (keyvalue != NULL)
+			{
+				if(flag == 0)
+				{
+					if(validatekey(keyvalue))
+					{
+						printf("Invalid key found\n");
+						exit(0);
+					}
+					strcpy(key, keyvalue);
+					printd ("\tKey is = %s\n",key);
+					flag++;
+				}
+				else
+				{
+					printd ("\tValue is = %s",keyvalue);
+					printd (" (%d)\n", atoi(keyvalue));
+					add_key_value(key, atoi(keyvalue));
+					flag = 0;
+				}
+				keyvalue = strtok (NULL, " =");
+			}
+		}
+		linecount++;
+		printd("%s", "------------------- \n");
+	}
+
+        	
+	fclose(fp);
+
+	stMQConfig.procId = COREPROC1; /* [TODO]: Remove Hardcode, Assuming for the time being same proc for all threads */ 
+	stMQConfig.numThreads = linecount;
+        stMQConfig.pThrConfig = (thrConfigs *)malloc(stMQConfig.numThreads * sizeof(struct stProPerfConfig)); 
+
+	for(i = 0; i<stMQConfig.numThreads; i++)
+	{
+                stMQConfig.pThrConfig[i].thread_num = i;
+                stMQConfig.pThrConfig[i].numMessages = xyz[i].msgCount;
+                stMQConfig.pThrConfig[i].numWaitTime = xyz[i].interval;
+                stMQConfig.pThrConfig[i].payloadSize = xyz[i].msgSize;
+                stMQConfig.pThrConfig[i].procId = xyz[i].procID;
+                stMQConfig.pThrConfig[i].config_param = xyz[i].direction;
+
+		printf("Thread [%d] : direction = %d, msgSize = %d, msgCount = %d, interval = %d, procID = %d\n",
+		stMQConfig.pThrConfig[i].thread_num,
+                stMQConfig.pThrConfig[i].config_param,
+                stMQConfig.pThrConfig[i].payloadSize,
+                stMQConfig.pThrConfig[i].numMessages,
+                stMQConfig.pThrConfig[i].numWaitTime,
+                stMQConfig.pThrConfig[i].procId);
+
+                stMQConfig.totalReqPayloadSize += stMQConfig.pThrConfig[i].payloadSize;
+	}
 
     status = Ipc_start();
     if (status < 0) {
@@ -717,78 +943,98 @@ int main (int argc, char ** argv)
     }
 
     /* setup rpc connection) */
-    status = Mx_initialize(procNum);
-
+    status = Mx_initialize(stMQConfig.procId);
     if (status < 0) {
         printf("Mx_initialize failed: status = 0x%x\n", status);
+	goto exit;
     }
 
     /*Use the MMRPC to get a shared space address*/
-    ret = callCompute_Linux(&bufferPtr, &bufferPtrRemoteAddr, &bufferPtrSize);
+    ret = callCompute_Linux(&stMQConfig);
     if (ret < 0) {
         status = -1;
         goto leave;
     }
 
-    tempnummsg = (numMessages/numThreads);
-    numMessages = tempnummsg;/*Num messages to be exchanged per thread*/
-
-    /* handshake with remote to set numThreads, numMessages, Message Size */
-    MessageQApp_handshake(numThreads,numMessages,numMsgSize,procNum);
+    /* handshake with remote to set numThreads, Message Size,Waittime */
+    MessageQApp_handshake(stMQConfig);
 
     clock_gettime(CLOCK_REALTIME, &start);
 
     /* Launch multiple threads: */
-    for (i = 0; i < numThreads; i++) {
-        /* Create the test thread: */
-        threads[i].thread_num = i;
-        threads[i].boBufPayloadPtr = bufferPtrRemoteAddr + (i * numMsgSize/numThreads);
-        threads[i].boBufPayloadSize  = (bufferPtrSize/numThreads);
-        ret = pthread_create(&threads[i].thread_id, NULL, &pingThreadFxn,
-                           &(threads[i]));
-        if (ret) {
-            printf("MessageQZeroCpy: can't spawn thread: %d, %s\n",
-                    i, strerror(ret));
-        }
+    for (i = 0; i < stMQConfig.numThreads; i++) {
+        /* Create the test threads as per directions: */
+        stMQConfig.pThrConfig[i].boBufPayloadPtr = stMQConfig.bufferPtrRemoteAddr + tempOffsetCtr;
+        stMQConfig.pThrConfig[i].boBufPayloadSize  = stMQConfig.pThrConfig[i].payloadSize;
+	tempOffsetCtr += stMQConfig.pThrConfig[i].payloadSize;
+
+	if(stMQConfig.pThrConfig[i].config_param == unidirectional_send)
+	{
+		ret = pthread_create(&stMQConfig.pThrConfig[i].thread_id, NULL, &pingThreadFxn_uni_send,
+				   &(stMQConfig.pThrConfig[i]));
+		if (ret) {
+			printf("MessageQMulti: can't spawn thread: %d, %s\n",
+						i, strerror(ret));
+		}
 #if PRINT_DEBUG
-        printf("thread:%d  bufferPtr = 0x%x, bufferPtrRemoteAddr = 0x%x bufferPtrSize = %d\n", 
-                 i, 
-                 bufferPtr, 
-                 threads[i].boBufPayloadPtr,
-                 threads[i].boBufPayloadSize);
+		printf("Sender Thread:%d Direction:%d bufferPtr = 0x%x, bufferPtrRemoteAddr = 0x%x bufferPtrSize = %d\n", 
+			 stMQConfig.pThrConfig[i].thread_num, 
+			 stMQConfig.pThrConfig[i].config_param,
+			 stMQConfig.bufferPtr,
+			 stMQConfig.pThrConfig[i].boBufPayloadPtr,
+			 stMQConfig.pThrConfig[i].boBufPayloadSize);
 #endif
+	}
+	else if(stMQConfig.pThrConfig[i].config_param == unidirectional_recv)
+	{
+			ret = pthread_create(&stMQConfig.pThrConfig[i].thread_id, NULL, &pingThreadFxn_uni_recv,
+							   &(stMQConfig.pThrConfig[i]));
+			if (ret) {
+				printf("MessageQMulti: can't spawn thread: %d, %s\n",
+						i, strerror(ret));
+			}
+#if PRINT_DEBUG
+                printf("Receiver Thread:%d Direction:%d bufferPtr = 0x%x, bufferPtrRemoteAddr = 0x%x bufferPtrSize = %d\n",
+                         stMQConfig.pThrConfig[i].thread_num,
+                         stMQConfig.pThrConfig[i].config_param,
+                         stMQConfig.bufferPtr,
+                         stMQConfig.pThrConfig[i].boBufPayloadPtr,
+                         stMQConfig.pThrConfig[i].boBufPayloadSize);
+
+#endif
+	}
     }
 
     /* Join all threads: */
-    for (i = 0; i < numThreads; i++) {
-        ret = pthread_join(threads[i].thread_id, NULL);
+    for (i = 0; i < stMQConfig.numThreads; i++) {
+        ret = pthread_join(stMQConfig.pThrConfig[i].thread_id, NULL);
         if (ret != 0) {
-            printf("MessageQZeroCpy: failed to join thread: %d, %s\n",
+            printf("MessageQMulti: failed to join thread: %d, %s\n",
                     i, strerror(ret));
         }
 #if PRINT_DEBUG
-        printf("MessageQZeroCpy: Joined with thread %d\n",threads[i].thread_num);
+        printf("MessageQMulti: Joined with thread %d\n",stMQConfig.pThrConfig[i].thread_num);
 #endif
     }
     
     clock_gettime(CLOCK_REALTIME, &end);
     elapsed = diff(start, end);
 
-    printf("This run took a total return time of %ld msecs to transport totally about \n %d Messages each containing %d bytes of data across %d threads\n",
-        (elapsed/1000),
-        (numMessages*numThreads),
-         (numMsgSize/numThreads),
-        numThreads);
+    printf("This use-case run took a total time of %ld msecs to transport totally\n",
+        (elapsed/1000));
 
         /*** Data Transaction Prototype Function***/
         /* Create the test thread: */
-        ret = dataTransactFxn();
+        ret = dataTransactFxn(stMQConfig);
         if (ret) {
-            printf("MessageQZeroCpy: can't spawn thread: %d, %s\n",
+            printf("MessageQMulti: can't spawn thread: %d, %s\n",
                     0, strerror(ret));
         }
-    
+
 leave:
+    free(stMQConfig.pThrConfig);
+    stMQConfig.pThrConfig = NULL;
+
     status = Mx_compute_Release();
     if (status < 0) {
         printf("mmrpc_test: Error: MmRpc_release failed\n");

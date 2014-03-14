@@ -1,8 +1,8 @@
 AM_CFLAGS = @DRM_CFLAGS@ 
 
-bin_PROGRAMS = MessageQZeroCpy
+bin_PROGRAMS = MessageQZCpy
 
-MessageQZeroCpy_SOURCES = MessageQZeroCpy.c
+MessageQZCpy_SOURCES = MessageQZCpy.c
 
-MessageQZeroCpy_LDADD = \
+MessageQZCpy_LDADD = \
 	@DRM_LIBS@ @GTHREAD_LIBS@ -ltiipc -ltiipcutils -lmmrpc  

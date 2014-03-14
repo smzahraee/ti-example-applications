@@ -402,7 +402,7 @@ var evmDRA7XX_ExtMemMapIpu1 = {
     EXT_HEAP: {
         name: "EXT_HEAP",
         base: 0x80200000,
-        len:  0x00300000,
+        len:  0x09600000,
         space: "data",
         access: "RW"
     },
@@ -490,7 +490,7 @@ for (var i = 0; i < Build.targets.length; i++) {
         Pkg.addExecutable(name + "/messageq_zerocpy", targ, platform, {
             cfgScript: "messageq_zerocpy",
             defs: "-D BENCHMARK -D IPU -D OMAP5xxx -DRPMSG_NS_2_0" + extraDefs
-        }).addObjects(["messageq_zerocpy.c"]);
+        }).addObjects(["messageq_zerocpy.c","load_task.c"]);
 
         }
 }

@@ -3,17 +3,19 @@ Linux side app gets auto built as part of the Yocto build.
 
 BIOS
 In order to build the BIOS side binary for this app
-1. Make sure you have a IPC Source Package already built for a particular platform.
-2. navigate to this directory and update the <PATH> in the below command and choose the desired platform and run
+1. Make sure you have a IPC Source Package already built for particular platform
+2. navigate to this directory and update the tool paths in the below commands & tools version & choose the platform and build
 
 $ cd messageq_ipc_bios
 
-$ make -f ipc-bios.mak all PLATFORM=<omap54xx_smp/dra7xx-evm> IPCSRC=<PATH>/ipc_3_10_00_08 XDC_INSTALL_DIR=<PATH>/xdctools_3_25_02_70 BIOS_INSTALL_DIR=<PATH>/bios_6_35_02_45 ti.targets.arm.elf.M4=<PATH>/TI_CGT_TI_ARM_5.0.1 ti.targets.elf.C64T=<PATH>/TI_CGT_C6000_7.2.0
+$ make -f ipc-bios.mak all PLATFORM=<OMAP54XX/DRA7XX> IPCSRC=<GLSDK>/component-sources/ipc_x.xx.xx.xx XDC_INSTALL_DIR=<GLSDK>/component-sources/xdctools_x_xx_xx_xx BIOS_INSTALL_DIR=<GLSDK>/component-sources/bios_x_xx_xx_xx ti.targets.arm.elf.M4=<GLSDK>/ti-devkit/cgt470_5_0_1
 
 Copy the built BIOS side binary found here 
 *************
 IPU:
 example-applications/messageq/messageq_ipc_bios/packages/ti/ipc/tests/bin/ti_platforms_sdp5430_IPU/messageq_zerocpy.xem4
+or
+example-applications/messageq/messageq_ipc_bios/packages/ti/ipc/tests/bin/ti_platforms_evmDRA7XX_ipu2/messageq_zerocpy.xem4
 *************
 
 in to the target filesystem location: /lib/firmware rename the binary to ducati-m3-core0.xem3

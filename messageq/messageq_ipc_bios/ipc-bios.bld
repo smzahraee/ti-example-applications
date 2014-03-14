@@ -113,15 +113,9 @@ var lnkOpts = {
                                         " --cinit_compression=off"
 };
 
-/* Enable building SMP-BIOS enabled libraries for targets that support it */
-if (Pkg.name.match(/^ti\.sdo\.(ipc|utils)/)) {
-    xdc.module("ti.targets.arm.elf.M3").profiles["smp"] =
-            xdc.module("ti.targets.arm.elf.M3").profiles["debug"];
-    xdc.module("ti.targets.arm.elf.M4").profiles["smp"] =
-            xdc.module("ti.targets.arm.elf.M4").profiles["debug"];
-}
-
 var platform = "";
+var smpEnabled = true;
+var Bld_goal = "";
 
 /* initialize local vars with those set in xdcpaths.mak (via XDCARGS) */
 for (arg = 0; arg < arguments.length; arg++) {
@@ -135,6 +129,20 @@ for (arg = 0; arg < arguments.length; arg++) {
         platform = configParts[0].split("=")[1];
         continue;
     }
+    else if (configParts[0].split("=")[0] == "BIOS_SMPENABLED") {
+        // print("FOUND SMP_ENABLED ARG - " + configParts[0]);
+        smpEnabled = configParts[0].split("=")[1].match(/^1$/);
+        continue;
+    }
+    else if (configParts[0].split("=")[0] == "GOAL") {
+        Bld_goal = configParts[0].split("=")[1];
+        continue;
+    }
+
+    if (platform == "") {
+        platform = "NONE";
+    }
+
     /*
      * Get the compiler's installation directory.
      * For "ti.targets.elf.C674=/vendors/c6x/7.2.0", we get "/vendors/c6x/7.2.0"
@@ -175,24 +183,28 @@ for (arg = 0; arg < arguments.length; arg++) {
 
     /* Add appropriate platforms to build for based on target name */
     if (targetName.match(/elf\.C674/)) {
-        if (platform == 'omapl138') {
+        if (platform == 'OMAPL138') {
             target.platforms.$add("ti.platforms.evmOMAPL138:DSP");
         }
     }
 
     if (targetName.match(/elf\.C66$/)) {
         switch (platform) {
-            case 'tci6636':
+            case 'TCI6636':
                 target.platforms.$add("ti.platforms.evmTCI6636K2H");
                 break;
 
-            case 'tci6638':
+            case 'TCI6638':
                 target.platforms.$add("ti.platforms.evmTCI6638K2K");
                 break;
 
-            case 'dra7xx':
+            case 'DRA7XX':
                 target.platforms.$add("ti.platforms.evmDRA7XX:dsp1");
                 target.platforms.$add("ti.platforms.evmDRA7XX:dsp2");
+                break;
+
+            case 'NONE':
+                /* okay, no platform specified */
                 break;
 
             default:
@@ -202,20 +214,24 @@ for (arg = 0; arg < arguments.length; arg++) {
     }
 
     if (targetName.match(/elf\.C64T/)) {
-        if (platform == 'omap54xx_smp') {
+        if (platform == 'OMAP54XX') {
             target.platforms.$add("ti.platforms.sdp5430:DSP");
         }
     }
 
     if (targetName.match(/elf\.M4$/)) {
         switch (platform) {
-            case 'omap54xx_smp':
+            case 'OMAP54XX':
                 target.platforms.$add("ti.platforms.sdp5430:IPU");
                 break;
 
-            case 'dra7xx':
+            case 'DRA7XX':
                 target.platforms.$add("ti.platforms.evmDRA7XX:ipu2");
                 target.platforms.$add("ti.platforms.evmDRA7XX:ipu1");
+                break;
+
+            case 'NONE':
+                /* okay, no platform specified */
                 break;
 
             default:
@@ -227,6 +243,15 @@ for (arg = 0; arg < arguments.length; arg++) {
     Build.targets.$add(target);
 }
 
+if (smpEnabled) {
+    /* Enable building SMP-BIOS enabled libraries for targets that support it */
+    if (Pkg.name.match(/^ti\.sdo\.(ipc|utils)/)) {
+        xdc.module("ti.targets.arm.elf.M3").profiles["smp"] =
+                xdc.module("ti.targets.arm.elf.M3").profiles["debug"];
+        xdc.module("ti.targets.arm.elf.M4").profiles["smp"] =
+                xdc.module("ti.targets.arm.elf.M4").profiles["debug"];
+    }
+}
 
 /* lib/ is a generated directory that 'xdc clean' should remove */
 Pkg.generatedFiles.$add("lib/");

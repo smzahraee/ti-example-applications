@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, Texas Instruments Incorporated
+ * Copyright (c) 2012-2014, Texas Instruments Incorporated
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -54,13 +54,39 @@
 #include <ti/ipc/mm/MmServiceMgr.h>
 #include <ti/sysbios/hal/Cache.h>
 
+#include <ti/ipc/tests/load_task.h>
+
 #define SLAVE_MESSAGEQNAME "SLAVE"
 #define HOST_MESSAGEQNAME "HOST"
-#define NUMOFTHREADSMAX 20
+#define A15_MESSAGEQNAME   "A15"
+#define M4_MESSAGEQNAME    "M4"
 
 static unsigned int numThreads;
-static unsigned int numMsgs;
-static unsigned int numMsgSize;
+
+enum ThreadDirection {
+        unidirectional_send = 0,
+        unidirectional_recv,
+        bidirectional
+};
+
+typedef struct SyncMsg {
+    unsigned int boBufPayloadPtr; /*Shared Region pointer address to be exchanged using MessageQ*/
+    unsigned int boBufPayloadSize; /*Shared Region pointer address  Size*/
+    unsigned int numThread; /* Indicates the number of threads to the other core: Handshake */
+    unsigned int numMessages; /* Indicates the number of messages: Handshake */
+    unsigned int numWaitTime; /* Indicates the sleep/wait between send messages: Handshake */
+    unsigned int payloadSize; /* Indicates the size of the payload which will be carried by each message: Handshake */
+    unsigned int procId; /* Indicates the size of the payload which will be carried by each message: Handshake */
+    unsigned int thrDirection; /* Used a double to use each bit field for a thread. hence restriction of 64 threads*/
+    Task_Handle thrId;
+ } SyncMsg;
+
+
+typedef struct RemoteBufSyncMsg {
+    MessageQ_MsgHeader header;
+    unsigned int *boBufPayloadPtr; /*Shared Region pointer address to be exchanged using MessageQ*/
+    unsigned int boBufPayloadSize; /*Shared Region pointer address  Size*/
+} RemoteBufSyncMsg;
 
 static int gFinishedCounter = 0;
 
@@ -68,6 +94,11 @@ static int gFinishedCounter = 0;
 
 /* turn on/off printf's */
 #define CHATTER 0
+
+#define HEAPID                      0u
+
+extern UInt32 gUtils_startLoadCalc;
+extern UInt32 gUtils_LoadLogInterval;
 
 #define SERVICE_NAME "rpc_example"
 
@@ -225,9 +256,9 @@ leave:
 
 Void dataTransactFxn(Void)
 {
-    MessageQ_Msg     getMsg;
-    MessageQ_Handle  messageQ;
-    MessageQ_QueueId remoteQueueId;
+    MessageQ_Msg     getMsgData;
+    MessageQ_Handle  messageQData;
+    MessageQ_QueueId remoteQueueIdData;
     Int              status,i;
     Char             localQueueName[64];
     Char             hostQueueName[64];
@@ -242,28 +273,27 @@ Void dataTransactFxn(Void)
     System_sprintf(hostQueueName,  "%s_%d", HOST_MESSAGEQNAME,  0);
 
     /* Create a message queue. */
-    messageQ = MessageQ_create(localQueueName, NULL);
-    if (messageQ == NULL) {
+    messageQData = MessageQ_create(localQueueName, NULL);
+    if (messageQData == NULL) {
         System_abort("MessageQ_create failed\n");
     }
 
-    System_printf("loopbackFxn: created MessageQ: %s; QueueID: 0x%x\n",
-        localQueueName, MessageQ_getQueueId(messageQ));
-    System_printf("Start the main loop: %d\n", 0);
+    System_printf("dataTransactFxn: created MessageQ: %s; QueueID: 0x%x\n",
+        localQueueName, MessageQ_getQueueId(messageQData));
 
     //startC = Clock_getTicks();
         /* Get a message */
-        status = MessageQ_get(messageQ, &getMsg, MessageQ_FOREVER);
+        status = MessageQ_get(messageQData, &getMsgData, MessageQ_FOREVER);
         if (status != MessageQ_S_SUCCESS) {
            System_abort("This should not happen since timeout is forever\n");
         }
-        remoteQueueId = MessageQ_getReplyQueue(getMsg);
+        remoteQueueIdData = MessageQ_getReplyQueue(getMsgData);
 
-        handshake_params = MessageQ_payload(getMsg);
+        handshake_params = MessageQ_payload(getMsgData);
         boBufPayloadPtr = (UInt32 *)handshake_params[0];
         boBufPayloadSize = handshake_params[1];
 #if CHATTER
-        System_printf("Recvd boBufPayloadPtr:0x%x, boBufPayloadSize= %d, boBufPayloadPtr[0]=0x%x, boBufPayloadPtr[boBufPayloadSize-4]=0x%x\n",
+        System_printf("dataTransactFxn: Recvd boBufPayloadPtr:0x%x, boBufPayloadSize= %d, boBufPayloadPtr[0]=0x%x, boBufPayloadPtr[boBufPayloadSize-4]=0x%x\n",
         boBufPayloadPtr,
         boBufPayloadSize,
         boBufPayloadPtr[0],
@@ -284,13 +314,13 @@ Void dataTransactFxn(Void)
       for (i = 0; i < (boBufPayloadSize/sizeof(uint32_t)); i++) {
        boBufPayloadPtr[i] = 0xdeadbeef;
       }
- 
+
         /* test id of message received */
-        if (MessageQ_getMsgId(getMsg) != 1) {
+        if (MessageQ_getMsgId(getMsgData) != 1) {
             System_abort("The id received is incorrect!\n");
         }
 
-        status = MessageQ_put(remoteQueueId, getMsg);
+        status = MessageQ_put(remoteQueueIdData, getMsgData);
         if (status != MessageQ_S_SUCCESS) {
            System_abort("MessageQ_put had a failure/error\n");
         }
@@ -299,34 +329,115 @@ Void dataTransactFxn(Void)
                           arg0,numMsgs,
             endC - startC, ((endC - startC) * Clock_tickPeriod) / numMsgs);*/
 
-    MessageQ_delete(&messageQ);
+    MessageQ_delete(&messageQData);
 }
+
 /*
- *  ======== loopbackFxn========
+ *  ======== loopbackFxn_Send========
  *  Receive and return messages.
  *  Run at priority lower than tsk1Fxn above.
  *  Inputs:
  *     - arg0: number of the thread, appended to MessageQ host and slave names.
  */
-Void loopbackFxn(UArg arg0, UArg arg1)
+Void loopbackFxn_Send(UArg arg0, UArg arg1)
+{
+    MessageQ_Msg     sndMsg;
+#if CHATTER
+    MessageQ_Handle  messageQ;
+    Char             localQueueName[64];
+    UInt32 *handshake_params;
+    UInt32 *boBufPayloadPtr, boBufPayloadSize;
+#endif
+    MessageQ_QueueId HostQueueId;
+    Char             hostQueueName[64];
+    Int              status;
+    UInt32           msgId = 0;
+    UInt32 startC;
+    UInt32 endC;
+    struct SyncMsg *thisTask = (struct SyncMsg *)arg0;
+
+#if CHATTER
+    System_printf("Thread loopbackFxn: %d\n", thisTask->numThread);
+#endif
+    System_sprintf(hostQueueName,  "%s_RECV_MQ_%d", A15_MESSAGEQNAME,  thisTask->numThread);
+#if CHATTER
+    System_printf("loopbackFxn: created MessageQ: %s; QueueID: 0x%x\n",
+        localQueueName, MessageQ_getQueueId(messageQ));
+    System_printf("Start the main loop: %d\n", thisTask->numThread);
+#endif
+    /* Poll until remote side has it's messageQ created before we send: */
+    do {
+        status = MessageQ_open (hostQueueName, &HostQueueId);
+        Task_sleep(1000);
+    } while (status == MessageQ_E_NOTFOUND);
+    if (status < 0) {
+        System_printf ("Error in MessageQ_open [0x%x]\n", status);
+    }
+
+    startC = Clock_getTicks();
+    while (msgId < thisTask->numMessages) {
+        sndMsg = MessageQ_alloc (HEAPID, sizeof(RemoteBufSyncMsg));
+        if (sndMsg == NULL) {
+            System_printf ("Error in MessageQ_alloc\n");
+            break;
+        }
+
+        MessageQ_setMsgId (sndMsg, msgId);
+
+        /* Have the remote proc reply to this message queue */
+      ((RemoteBufSyncMsg *)sndMsg)->boBufPayloadPtr =  (unsigned int *)thisTask->boBufPayloadPtr;
+      ((RemoteBufSyncMsg *)sndMsg)->boBufPayloadSize =  thisTask->boBufPayloadSize;
+
+        /* Send it back */
+        status = MessageQ_put(HostQueueId, sndMsg);
+        if (status != MessageQ_S_SUCCESS) {
+           System_abort("MessageQ_put had a failure/error\n");
+        }
+        msgId++;
+        Task_sleep((thisTask->numWaitTime/1000)+ ((thisTask->numWaitTime % 1000) != 0 )); /* Convert the receievd value which is in us to ms */
+    }
+
+    endC = Clock_getTicks();
+    System_printf("Thread %d: End Tic: %d\n",thisTask->numThread,endC);
+    System_printf("Thread %d: %d iterations took %d ticks or %d usecs/msg\n",
+                          thisTask->numThread, thisTask->numMessages,
+            endC - startC, ((endC - startC) * Clock_tickPeriod) /  thisTask->numMessages);
+
+#if CHATTER
+    System_printf("Test thread %d complete!\n", thisTask->numThread);
+#endif
+    MessageQ_close(&HostQueueId);
+
+    gFinishedCounter++;
+}
+
+/*
+ *  ======== loopbackFxn_Recv========
+ *  Receive and return messages.
+ *  Run at priority lower than tsk1Fxn above.
+ *  Inputs:
+ *     - arg0: number of the thread, appended to MessageQ host and slave names.
+ */
+Void loopbackFxn_Recv(UArg arg0, UArg arg1)
 {
     MessageQ_Msg     getMsg;
     MessageQ_Handle  messageQ;
-    MessageQ_QueueId remoteQueueId;
     Int              status;
-    UInt16           msgId = 0;
+    UInt32           msgId = 0;
     Char             localQueueName[64];
-    Char             hostQueueName[64];
     UInt32 startC;
     UInt32 endC;
+    struct SyncMsg *thisTask = (struct SyncMsg *)arg0;
+
+#if CHATTER
     UInt32 *handshake_params;
     UInt32 *boBufPayloadPtr, boBufPayloadSize;
-#if CHATTER
-    System_printf("Thread loopbackFxn: %d\n", arg0);
+    System_printf("Thread loopbackFxn_Recv: %d\n", thisTask->numThread);
 #endif
-    System_sprintf(localQueueName, "%s_%d", SLAVE_MESSAGEQNAME, arg0);
-    System_sprintf(hostQueueName,  "%s_%d", HOST_MESSAGEQNAME,  arg0);
-
+    System_sprintf(localQueueName, "%s_RECV_MQ_%d", M4_MESSAGEQNAME, thisTask->numThread);
+#if CHATTER
+    System_printf("Thread loopbackFxn_Recv: %d from Name:%s\n", thisTask->numThread,localQueueName);
+#endif
     /* Create a message queue. */
     messageQ = MessageQ_create(localQueueName, NULL);
     if (messageQ == NULL) {
@@ -334,23 +445,23 @@ Void loopbackFxn(UArg arg0, UArg arg1)
     }
 
 #if CHATTER
-    System_printf("loopbackFxn: created MessageQ: %s; QueueID: 0x%x\n",
+    System_printf("loopbackFxn_Recv: created MessageQ: %s; QueueID: 0x%x\n",
         localQueueName, MessageQ_getQueueId(messageQ));
-    System_printf("Start the main loop: %d\n", arg0);
+    System_printf("Start the main loop: %d\n", thisTask->numThread)
 #endif
     startC = Clock_getTicks();
-    while (msgId < numMsgs) {
+
+    while (msgId < thisTask->numMessages) {
         /* Get a message */
         status = MessageQ_get(messageQ, &getMsg, MessageQ_FOREVER);
         if (status != MessageQ_S_SUCCESS) {
            System_abort("This should not happen since timeout is forever\n");
         }
-        remoteQueueId = MessageQ_getReplyQueue(getMsg);
 
+#if CHATTER
         handshake_params = MessageQ_payload(getMsg);
         boBufPayloadPtr = (UInt32 *)handshake_params[0];
         boBufPayloadSize = handshake_params[1];
-#if CHATTER
         System_printf("Recvd boBufPayloadPtr:0x%x, boBufPayloadSize= %d, boBufPayloadPtr[0]=0x%x, boBufPayloadPtr[boBufPayloadSize-4]=0x%x\n",
         boBufPayloadPtr,
         boBufPayloadSize,
@@ -361,26 +472,22 @@ Void loopbackFxn(UArg arg0, UArg arg1)
         if (MessageQ_getMsgId(getMsg) != msgId) {
             System_abort("The id received is incorrect!\n");
         }
-
-        /* Send it back */
-        status = MessageQ_put(remoteQueueId, getMsg);
-        if (status != MessageQ_S_SUCCESS) {
-           System_abort("MessageQ_put had a failure/error\n");
-        }
+        status = MessageQ_free (getMsg);
         msgId++;
     }
 
-    gFinishedCounter++;
     endC = Clock_getTicks();
-
+    System_printf("Thread %d: End Tic: %d\n",thisTask->numThread,endC);
     System_printf("Thread %d: %d iterations took %d ticks or %d usecs/msg\n",
-                          arg0,numMsgs,
-            endC - startC, ((endC - startC) * Clock_tickPeriod) / numMsgs);
-    
+                          thisTask->numThread,thisTask->numMessages,
+            endC - startC, ((endC - startC) * Clock_tickPeriod) / thisTask->numMessages);
+
     MessageQ_delete(&messageQ);
 #if CHATTER
-    System_printf("Test thread %d complete!\n", arg0);
+    System_printf("Test thread %d complete!\n", thisTask->numThread);
 #endif
+
+    gFinishedCounter++;
 }
 
 Void tsk1Fxn(UArg arg0, UArg arg1)
@@ -389,66 +496,140 @@ Void tsk1Fxn(UArg arg0, UArg arg1)
     MessageQ_Handle  messageQ;
     MessageQ_QueueId remoteQueueId;
     Char             localQueueName[64];
-    UInt16 procId;
+    Char             tempTaskName[64];
     UInt32 *handshake_params;
     Task_Params params;
-    Int i;
+    Int i, status;
+    struct SyncMsg *pTaskConfigs = NULL;
 
+    gUtils_startLoadCalc = 1;
    /* Create handshake thread to correspond with host side test app: */
     while(1)
     {
-	gFinishedCounter = 0;
-	
-        /* Construct a MessageQ name adorned with core name: */
-	System_sprintf(localQueueName, "%s_%s", SLAVE_MESSAGEQNAME,
-				   MultiProc_getName(MultiProc_self()));
+               #if 1
+               gFinishedCounter = 0;
+	       Task_sleep(2000);
+	       Utils_prfLoadCalcReset();
 
-	messageQ = MessageQ_create(localQueueName, NULL);
-	if (messageQ == NULL) {
-		System_abort("MessageQ_create failed\n");
+               /* Construct a MessageQ name adorned with core name: */
+               System_sprintf(localQueueName, "%s_%s", SLAVE_MESSAGEQNAME,
+                                          MultiProc_getName(MultiProc_self()));
+
+               messageQ = MessageQ_create(localQueueName, NULL);
+               if (messageQ == NULL) {
+                       System_abort("MessageQ_create failed\n");
+               }
+
+               System_printf("tsk1Fxn: created MessageQ: %s; QueueID: 0x%x\n",
+               localQueueName, MessageQ_getQueueId(messageQ));
+
+               /* handshake with host to get starting parameters */
+               System_printf("Awaiting handshake sync message from host...\n");
+
+	       MessageQ_get(messageQ, &msg, MessageQ_FOREVER);
+
+	       /* Reset the Load figures at the start so that we are able to get accurate CPU Load profin for this instance of run */
+	       Utils_prfLoadCalcReset();
+
+               handshake_params = MessageQ_payload(msg); 
+               numThreads = handshake_params[2];
+               remoteQueueId = MessageQ_getReplyQueue(msg);
+
+	       status = MessageQ_put(remoteQueueId, msg);
+	       if (status != MessageQ_S_SUCCESS) {
+        	 System_abort("MessageQ_put had a failure/error\n");
+	       }
+
+	       pTaskConfigs = (struct SyncMsg *)Memory_alloc(NULL, (numThreads * sizeof(struct SyncMsg)), 0, NULL);
+		/*
+		 * Time to sleep between load reporting attempts, in ticks.
+		 * On TI platforms, 1 tick == 1 ms.
+		 */
+               gUtils_LoadLogInterval = 500;
+               for(i=0; i<numThreads;i++)
+               {
+
+	        	MessageQ_get(messageQ, &msg, MessageQ_FOREVER);
+			handshake_params = MessageQ_payload(msg);
+	                pTaskConfigs[i].numThread = i;
+			pTaskConfigs[i].numMessages = handshake_params[3];
+	                pTaskConfigs[i].numWaitTime = handshake_params[4];
+ 	                pTaskConfigs[i].payloadSize = handshake_params[5];
+
+                 	pTaskConfigs[i].boBufPayloadPtr = (UInt32)handshake_params[0];
+                	pTaskConfigs[i].boBufPayloadSize = handshake_params[1];
+
+	                if(handshake_params[7] == unidirectional_recv)
+         		{
+		                pTaskConfigs[i].thrDirection = unidirectional_send;
+	                }
+        	        else if (handshake_params[7] == unidirectional_send)
+                 	{
+				pTaskConfigs[i].thrDirection = unidirectional_recv;
+                   	}	
+
+               	       remoteQueueId = MessageQ_getReplyQueue(msg);
+#if CHATTER
+	               System_printf("Received handshake msg from (procId:remoteQueueId): 0x%x:0x%x\n"
+                       "Threads:%d Direction:%d messages: %d Wait Time(in us):%d payload: %d bytes, boBufPayloadPtr:%x, boBufPayloadSize:%d\n",
+                       MessageQ_getProcId(remoteQueueId), remoteQueueId,
+                       i,
+                       pTaskConfigs[i].thrDirection,
+                       pTaskConfigs[i].numMessages,
+                       pTaskConfigs[i].numWaitTime,
+                       pTaskConfigs[i].payloadSize,
+		       pTaskConfigs[i].boBufPayloadPtr,
+		       pTaskConfigs[i].boBufPayloadSize);
+#endif
+	   	       status = MessageQ_put(remoteQueueId, msg);
+	               if (status != MessageQ_S_SUCCESS) {
+        		         System_abort("MessageQ_put had a failure/error\n");
+               		}
+
+		}
+
+               MessageQ_delete(&messageQ);
+
+                System_printf("Overall Starting Tic: %d\n",Clock_getTicks());
+                /* Create N threads to correspond with host side N thread test app: */
+        	Task_Params_init(&params);
+	        params.priority = 3;
+	        for (i = 0; i < numThreads; i++) {
+	               System_sprintf(tempTaskName, "MessageQ_Task_%d",i);
+                       if(pTaskConfigs[i].thrDirection == unidirectional_recv)
+                       {
+				params.arg0 = (unsigned int)&pTaskConfigs[i];
+				pTaskConfigs[i].thrId = Task_create(loopbackFxn_Recv, &params, NULL);
+				if( NULL == pTaskConfigs[i].thrId)
+				        System_printf("Task[%d]:Could not create %s task!\n",i,tempTaskName);
+	               }
+                       else if(pTaskConfigs[i].thrDirection == unidirectional_send)
+                       {
+				params.arg0 = (unsigned int)&pTaskConfigs[i];
+				pTaskConfigs[i].thrId =  Task_create(loopbackFxn_Send, &params, NULL);
+				if( NULL == pTaskConfigs[i].thrId)
+					System_printf("Task[%d]:Could not create %s task!\n",i,tempTaskName);
+                       }
+        	}
+
+        	while(gFinishedCounter < numThreads)
+        	{	
+           		Task_sleep(1000);    // sleep 1 second
+		}
+
+        dataTransactFxn();
+
+	for (i = 0; i < numThreads; i++) {
+		Task_delete(&pTaskConfigs[i].thrId);
 	}
 
-	System_printf("tsk1Fxn: created MessageQ: %s; QueueID: 0x%x\n",
-	localQueueName, MessageQ_getQueueId(messageQ));
-	
-	/* handshake with host to get starting parameters */
-	System_printf("Awaiting handshake sync message from host...\n");
-	MessageQ_get(messageQ, &msg, MessageQ_FOREVER);
+	Memory_free(NULL,pTaskConfigs, (numThreads * sizeof(struct SyncMsg)));
 
-	handshake_params = MessageQ_payload(msg);
-	numThreads = handshake_params[0];
-	numMsgs = handshake_params[1];
-	numMsgSize = handshake_params[2];
-
-	remoteQueueId = MessageQ_getReplyQueue(msg);
-	procId = MessageQ_getProcId(remoteQueueId);
-
-	System_printf("Received hanshake msg from (procId:remoteQueueId): 0x%x:0x%x\n"
-		"Threads:%d messages: %d payload: %d bytes\n",
-		procId, remoteQueueId,
-		numThreads,
-		numMsgs,
-		numMsgSize);
-
-	MessageQ_put(remoteQueueId, msg);
-	MessageQ_delete(&messageQ);
-	
-        /* Create N threads to correspond with host side N thread test app: */
-        Task_Params_init(&params);
-        params.priority = 3;
-        for (i = 0; i < numThreads; i++) {
-            params.arg0 = i;
-            Task_create(loopbackFxn, &params, NULL);
-        }
-    
-       while(gFinishedCounter < numThreads)
-       {   
-          Task_sleep(1000);    // sleep 1 second
-       }
-
-       dataTransactFxn();
+	gUtils_LoadLogInterval = 5000;
+        #endif
     }
 }
+
 
 Void mmrpc_tsk1Fxn(UArg arg0, UArg arg1)
 {
@@ -460,9 +641,39 @@ Void mmrpc_tsk1Fxn(UArg arg0, UArg arg1)
  */
 Int main(Int argc, Char* argv[])
 {
-    Task_create(tsk1Fxn, NULL, NULL);
-    Task_create(mmrpc_tsk1Fxn, NULL, NULL);
-    
+    Task_Handle mqTask;
+    Task_Handle mmrpcTask;
+    Task_Params paramsMq;
+    Task_Params paramsMMrpc;
+
+    Utils_prfInit();
+
+    start_load_task();
+
+    /* Monitor load and trace any change. */
+    Task_Params_init(&paramsMq);
+    paramsMq.instance->name = "MessageQ_Task";
+    paramsMq.priority = 1;
+    Task_Params_init(&paramsMMrpc);
+    paramsMMrpc.instance->name = "MMRPC_Task";
+    paramsMMrpc.priority = 1;
+
+    mqTask = Task_create(tsk1Fxn, &paramsMq, NULL);
+    if( NULL != mqTask)
+    {
+        Utils_prfLoadRegister(mqTask, "Main_Task");
+    }
+    else
+        System_printf("Could not create MessageQ_Task task!\n");
+
+    mmrpcTask = Task_create(mmrpc_tsk1Fxn, &paramsMMrpc, NULL);
+    if( NULL != mmrpcTask)
+    {
+        Utils_prfLoadRegister(mmrpcTask, "MMRPC_Task");
+    }
+    else
+        System_printf("Could not create MessageQ_Task task!\n");
+
     BIOS_start();
 
     return (0);

@@ -35,9 +35,9 @@
 # Where to install/stage the packages
 # Typically this would point to the devkit location
 #
-DESTDIR ?= 
+DESTDIR ?= <UNDEFINED>
 
-packagesdir ?=
+packagesdir ?= /packages
 libdir ?= /lib
 includedir ?= /include
 
@@ -73,6 +73,7 @@ include ./products.mak
 #
 XDCARGS= \
     PLATFORM=\"$(PLATFORM)\" \
+    BIOS_SMPENABLED=\"$(BIOS_SMPENABLED)\" \
     ti.targets.C28_large=\"$(ti.targets.C28_large)\" \
     ti.targets.C28_float=\"$(ti.targets.C28_float)\" \
     ti.targets.C64P=\"$(ti.targets.C64P)\" \
@@ -94,6 +95,10 @@ XDCARGS= \
     ti.targets.arp32.elf.ARP32_far=\"$(ti.targets.arp32.elf.ARP32_far)\" \
     gnu.targets.arm.A8F=\"$(gnu.targets.arm.A8F)\" \
     gnu.targets.arm.A15F=\"$(gnu.targets.arm.A15F)\"
+
+ifeq ($(MAKECMDGOALS),release)
+    XDCARGS += GOAL=release
+endif
 
 #
 # Get list of packages to rebuild. Remove examples from the list.
@@ -136,19 +141,19 @@ XDC = $(XDC_INSTALL_DIR)/xdc XDCARGS="$(XDCARGS)" XDCBUILDCFG=./ipc-bios.bld
 ######################################################
 
 all:
-	@ echo building ipc packages ...
+	@echo building ipc packages ...
 # build everything in the Bios IPC package
-	@ $(XDC) -P $(LIST)
+	@$(XDC) -P $(LIST)
 
 libs:
 	@echo "#"
 	@echo "# Making $@ ..."
-	$(XDC) .dlls -P $(LIST)
+	@$(XDC) .dlls -P $(LIST)
 
 release:
-	@ echo building ipc packages ...
+	@echo building ipc packages ...
 # create a XDC release for the Bios IPC package
-	@ $(XDC) release -P $(LIST)
+	@$(XDC) release -P $(LIST)
 
 clean:
 	@ echo cleaning ipc packages ...
@@ -164,6 +169,6 @@ install-packages:
 install:
 	@ echo installing ti/ipc to $(DESTDIR) ...
 	@ mkdir -p $(DESTDIR)/$(prefix)/$(docdir)
-#	@ cp -rf $(wildcard ipc_*_release_notes.html) docs/* $(DESTDIR)/$(prefix)/$(docdir)
+	@ cp -rf $(wildcard ipc_*_release_notes.html) docs/* $(DESTDIR)/$(prefix)/$(docdir)
 	@ mkdir -p $(DESTDIR)/$(prefix)/$(includedir)/ti/ipc
 	@ cp -rf packages/ti/ipc/*.h $(DESTDIR)/$(prefix)/$(includedir)/ti/ipc

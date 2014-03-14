@@ -37,13 +37,13 @@
 
 # Optional: recommended to install all dependent components in one folder.
 #
-DEPOT ?=
+DEPOT ?= _your_depot_folder_
 
-# Optional: platform to build
+# Platform to build for
 #   Supported platforms (choose one):
-#       omapl138, omap54xx_smp, dra7xx, tci6636, tci6638
+#       OMAPL138, OMAP54XX, DRA7XX, TCI6636, TCI6638
 #
-# Note, this is used for both Linux and BIOS builds
+# Note, this is used for Linux, QNX and BIOS builds
 #
 PLATFORM ?=
 
@@ -52,12 +52,11 @@ PLATFORM ?=
 
 # Set up required cross compiler path for IPC Linux configuration and build
 #
-TOOLCHAIN_LONGNAME ?= arm-linux-gnueabihf
-TOOLCHAIN_INSTALL_DIR ?= 
+TOOLCHAIN_LONGNAME ?= arm-none-linux-gnueabi
+TOOLCHAIN_INSTALL_DIR ?= $(DEPOT)/_your_arm_code_gen_install_
 TOOLCHAIN_PREFIX ?= $(TOOLCHAIN_INSTALL_DIR)/bin/$(TOOLCHAIN_LONGNAME)-
 
-# Optional: Path to Linux Kernel - needed to build the MmRpc user libraries
-# (for devices that support it)
+# Path to Linux Kernel - needed to build the IPC user libraries
 #
 KERNEL_INSTALL_DIR ?=
 
@@ -80,16 +79,17 @@ QNX_INSTALL_DIR ?=
 #
 DESTDIR ?=
 
-# List of supported devices (choose one): omap5432, vayu, simvayu
-#
-DEVICE ?=
-
 #################### IPC Bios ####################
 
 # Path to required dependencies for IPC BIOS builds
 #
-XDC_INSTALL_DIR ?= $(DEPOT)/xdctools_3_25_02_70
-BIOS_INSTALL_DIR ?= $(DEPOT)/bios_6_35_02_45
+XDC_INSTALL_DIR ?= $(DEPOT)/_your_xdctools_install_
+BIOS_INSTALL_DIR ?= $(DEPOT)/_your_bios_install_
+
+# Do you want to build SMP-enabled libraries (if supported for your target)?
+# Set to either 0 (disabled) or 1 (enabled)
+#
+BIOS_SMPENABLED=1
 
 # Path to various cgtools
 #
@@ -101,7 +101,7 @@ ti.targets.C674 ?=
 
 ti.targets.elf.C64P ?=
 ti.targets.elf.C64P_big_endian ?=
-ti.targets.elf.C64T ?= $(DEPOT)/TI_CGT_C6000_7.2.0
+ti.targets.elf.C64T ?=
 ti.targets.elf.C66 ?=
 ti.targets.elf.C66_big_endian ?=
 ti.targets.elf.C674 ?=
@@ -110,7 +110,7 @@ ti.targets.arm.elf.Arm9 ?=
 ti.targets.arm.elf.A8F ?=
 ti.targets.arm.elf.A8Fnv ?=
 ti.targets.arm.elf.M3 ?=
-ti.targets.arm.elf.M4 ?= $(DEPOT)/TI_CGT_TI_ARM_5.0.1
+ti.targets.arm.elf.M4 ?=
 ti.targets.arm.elf.M4F ?=
 
 ti.targets.arp32.elf.ARP32 ?=
