@@ -32,8 +32,10 @@
 
 /**
  * @file       testvpe.c
- * @author     Nikhil Devshatwar <nikhil.nd@ti.com>
- * @brief      Example program to test deinterlacing through vpe
+ * @authors    Nikhil Devshatwar <nikhil.nd@ti.com>
+ *	       Alaganraj S <alaganraj.s@ti.com>
+ * @brief      Example program to test following vpe features,
+ *             deinterlace, scalar, color space conversion.
  *
  * This program is to deinterlace a video file
  * It reads video fields from a file and writes progressive frames to another file
@@ -469,15 +471,12 @@ int main (
 	int	translen = 3;
 	struct	v4l2_control ctrl;
 	int 	field;
-	char    *video_dev = NULL;
 
-	if (argc < 12) {
+	if (argc < 11 || argc > 12) {
 		printf (
 		"USAGE : <SRCfilename> <SRCWidth> <SRCHeight> <SRCFormat> "
 			"<DSTfilename> <DSTWidth> <DSTHeight> <DSTformat> "
-                        "<interlace> <translen> <dev-node> [num_frames]\n"
-                        "num_frames = 20 by default\n");
-
+                        "<interlace> <translen> <numframes>[optional]\n");
 
 		return 1;
 	}
@@ -486,11 +485,6 @@ int main (
 	fin		= open (argv[1], O_RDONLY);
 	srcWidth	= atoi (argv[2]);
 	srcHeight	= atoi (argv[3]);
-        video_dev       = argv[11];
-
-        if (argc == 13)
-                num_frames = atoi (argv[12]);
-
 	describeFormat (argv[4], srcWidth, srcHeight, &srcSize, &srcFourcc, &src_coplanar, &src_colorspace);
 
 	/** Open output file in write mode Create the file if not present	*/
@@ -502,12 +496,16 @@ int main (
 	interlace = atoi (argv[9]);
 	translen = atoi (argv[10]);
 
+	if (argc == 12)
+		num_frames = atoi (argv[11]);
+
 	printf ("Input  @ %d = %d x %d , %d\nOutput @ %d = %d x %d , %d\n",
 		fin,  srcWidth, srcHeight, srcFourcc,
 		fout, dstWidth, dstHeight, dstFourcc);
 
 	if (	fin  < 0 || srcHeight < 0 || srcWidth < 0 || srcFourcc < 0 || \
-		fout < 0 || dstHeight < 0 || dstWidth < 0 || dstFourcc < 0) {
+		fout < 0 || dstHeight < 0 || dstWidth < 0 || dstFourcc < 0 || \
+		interlace < 0 || translen < 0 || num_frames < 0) {
 		printf("ERROR: Invalid arguments\n");
 		/** TODO:Handle errors precisely		*/
 		exit (1);
@@ -516,9 +514,9 @@ int main (
 		Files are ready Now
 	*************************************/
 
-	fd = open(video_dev,O_RDWR);
+	fd = open("/dev/video0",O_RDWR);
 	if(fd < 0) {
-		pexit("Can't open device");
+		pexit("Can't open device\n");
 	}
 
 	/* Number of buffers to process in one transaction - translen */
@@ -527,8 +525,9 @@ int main (
 	ctrl.value = translen;
 	ret = ioctl(fd, VIDIOC_S_CTRL, &ctrl);
 	if (ret < 0)
-		pexit("Can't set translen control");
+		pexit("Can't set translen control\n");
 
+	printf("S_CTRL success\n");
 	/* Allocate buffers for CAPTURE and OUTPUT stream */
 	ret = allocBuffers (V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, srcWidth,
 		srcHeight, src_coplanar, src_colorspace, &srcSize, &srcSize_uv,
