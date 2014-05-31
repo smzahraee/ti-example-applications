@@ -294,7 +294,7 @@ void releaseBuffers(
 	int	numbuf,
 	int	bufsize)
 {
-	while (numbuf >= 0){
+	while (numbuf > 0){
 		numbuf--;
 		munmap(base[numbuf],bufsize);
 	}
@@ -559,7 +559,7 @@ int main (
 	/**	Read  into the OUTPUT  buffers from fin file	*/
 
 	field = V4L2_FIELD_TOP;
-	for (i = 0; i < src_numbuf; i++) {
+	for (i = 0; i < src_numbuf && i < num_frames; i++) {
 		do_read("Y plane", fin, srcBuffers[i], srcSize);
 		if (src_coplanar)
 			do_read("UV plane", fin, srcBuffers_uv[i], srcSize_uv);
