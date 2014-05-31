@@ -57,6 +57,7 @@
 #include <linux/v4l2-controls.h>
 
 #include <sys/mman.h>
+#include <sys/time.h>
 #include <sys/ioctl.h>
 
 #define pexit(str) { \
@@ -322,6 +323,7 @@ int queueAllBuffers(
 	        buffer.index = i;
 		buffer.m.planes	= buf_planes;
 		buffer.length	= 2;
+		gettimeofday(&buffer.timestamp, NULL);
 
 		ret = ioctl (fd, VIDIOC_QBUF, &buffer);
 		if (-1 == ret) {
@@ -356,6 +358,7 @@ int queue(
 	buffer.m.planes	= buf_planes;
 	buffer.field    = field;
 	buffer.length	= 2;
+	gettimeofday(&buffer.timestamp, NULL);
 
 	ret = ioctl (fd, VIDIOC_QBUF, &buffer);
 	if(-1 == ret) {
@@ -470,6 +473,8 @@ int main (
 	int	interlace = 0;
 	int	translen = 3;
 	struct	v4l2_control ctrl;
+	struct	timeval now;
+	int	latency;
 	int 	field;
 
 	if (argc < 11 || argc > 12) {
@@ -604,6 +609,13 @@ int main (
 		 * write to the file and queue one empty buffer */
 		dequeue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, &buf, buf_planes);
 		printf("dequeued dest buffer with index %d\n", buf.index);
+
+		gettimeofday(&now, NULL);
+		latency = now.tv_usec - buf.timestamp.tv_usec;
+		if(latency < 0)
+			latency += 1000000;
+		latency += (now.tv_sec - buf.timestamp.tv_sec) * 1000000;
+		printf("Latency = %7dus", latency);
 
 		do_write("Y plane", fout, dstBuffers[buf.index], dstSize);
 		if (dst_coplanar)
