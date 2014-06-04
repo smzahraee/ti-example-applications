@@ -6,6 +6,9 @@ AC_INIT(example-apps, 0.1, https://git.ti.com/glsdk/example-applications)
 AC_CONFIG_SRCDIR([Makefile.am])
 AC_CONFIG_HEADERS([config.h])
 
+dnl required versions of gstreamer and plugins-base
+GST_REQUIRED=0.10.30
+
 #Initialize automake
 AM_INIT_AUTOMAKE([foreign dist-bzip2])
 AM_MAINTAINER_MODE
@@ -37,11 +40,31 @@ AM_CONDITIONAL(ENABLE_CAIRO, [test "x$HAVE_CAIRO" = xyes])
 
 PKG_CHECK_MODULES(GTHREAD, gthread-2.0)
 
+dnl Check for the required version of GStreamer core (and gst-plugins-base)
+dnl This will export GST_CFLAGS and GST_LIBS variables for use in Makefile.am
+PKG_CHECK_MODULES(GST, [
+  gstreamer-0.10 >= $GST_REQUIRED
+  gstreamer-base-0.10 >= $GST_REQUIRED
+  gstreamer-plugins-base-0.10 >= $GST_REQUIRED
+  gstreamer-plugins-bad-0.10
+], [
+  AC_SUBST(GST_CFLAGS)
+  AC_SUBST(GST_LIBS)
+], [
+  AC_MSG_ERROR([
+      You need to install or upgrade the GStreamer development
+      packages on your system. On debian-based systems these are
+      libgstreamer0.10-dev and libgstreamer-plugins-base0.10-dev.
+      on RPM-based systems gstreamer0.10-devel, libgstreamer0.10-devel
+      or similar. The minimum version required is $GST_REQUIRED.
+  ])
+])
+
 # Checks for header files.
 
 # Checks for typedefs, structures, and compiler characteristics.
 
 # Checks for library functions.
 
-AC_CONFIG_FILES([Makefile vpe/Makefile drm-tests/Makefile thermal/Makefile messageq/messageq_ipc_linux/Makefile])
+AC_CONFIG_FILES([Makefile vpe/Makefile drm-tests/Makefile thermal/Makefile messageq/messageq_ipc_linux/Makefile gst/Makefile])
 AC_OUTPUT
