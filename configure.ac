@@ -44,9 +44,6 @@ dnl Check for the required version of GStreamer core (and gst-plugins-base)
 dnl This will export GST_CFLAGS and GST_LIBS variables for use in Makefile.am
 PKG_CHECK_MODULES(GST, [
   gstreamer-0.10 >= $GST_REQUIRED
-  gstreamer-base-0.10 >= $GST_REQUIRED
-  gstreamer-plugins-base-0.10 >= $GST_REQUIRED
-  gstreamer-plugins-bad-0.10
 ], [
   AC_SUBST(GST_CFLAGS)
   AC_SUBST(GST_LIBS)
