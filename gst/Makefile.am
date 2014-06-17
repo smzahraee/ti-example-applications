@@ -1,5 +1,5 @@
 
-noinst_PROGRAMS = gsttestplayer 
+bin_PROGRAMS = gsttestplayer 
 
 gsttestplayer_SOURCES = gsttestplayer.c
 gsttestplayer_CFLAGS = $(GST_CFLAGS)

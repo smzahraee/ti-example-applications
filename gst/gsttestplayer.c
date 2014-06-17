@@ -90,6 +90,9 @@ create_pipeline (char *arg)
   else if (NULL != strcasestr (arg, ".ts"))
     demux_name = "mpegtsdemux";
 
+  else if (NULL != strcasestr (arg, ".avi"))
+    demux_name = "avidemux";
+
   else
     demux_name = "identity";
   if (NULL != strcasestr (arg, "264")) {
