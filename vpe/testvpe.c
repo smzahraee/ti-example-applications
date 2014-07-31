@@ -472,6 +472,7 @@ int main (
 	int	num_frames = 20;
 	int	interlace = 0;
 	int	translen = 3;
+	int	frame_no = 0;
 	struct	v4l2_control ctrl;
 	struct	timeval now;
 	int	latency;
@@ -588,23 +589,27 @@ int main (
 		struct v4l2_plane buf_planes[2];
 		int last = num_frames == 1 ? 1 : 0;
 
-		/* Wait for and dequeue one buffer from OUTPUT
-		 * to write data for next interlaced field */
-		dequeue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, &buf, buf_planes);
-		printf("dequeued source buffer with index %d\n", buf.index);
+		/* DEI: Do not Dequeue Source buffers immediately
+		 * De*interlacer keeps last two buffers in use */
+		if(!(interlace && frame_no <= 2)) {
+			/* Wait for and dequeue one buffer from OUTPUT
+			 * to write data for next interlaced field */
+			dequeue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, &buf, buf_planes);
+			printf("dequeued source buffer with index %d\n", buf.index);
 
-		if (!last) {
-			do_read ("Y plane", fin, srcBuffers[buf.index], srcSize);
-			if (src_coplanar)
-				do_read ("UV plane", fin, srcBuffers_uv[buf.index], srcSize_uv);
+			if (!last) {
+				do_read ("Y plane", fin, srcBuffers[buf.index], srcSize);
+				if (src_coplanar)
+					do_read ("UV plane", fin, srcBuffers_uv[buf.index], srcSize_uv);
 
-			queue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, buf.index, field, srcSize, srcSize_uv);
-			if (field == V4L2_FIELD_TOP)
-				field = V4L2_FIELD_BOTTOM;
-			else
-				field = V4L2_FIELD_TOP;
+				queue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, buf.index, field, srcSize, srcSize_uv);
+				if (field == V4L2_FIELD_TOP)
+					field = V4L2_FIELD_BOTTOM;
+				else
+					field = V4L2_FIELD_TOP;
+			}
+
 		}
-
 		/* Dequeue progressive frame from CAPTURE stream
 		 * write to the file and queue one empty buffer */
 		dequeue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, &buf, buf_planes);
@@ -625,6 +630,7 @@ int main (
 			queue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, buf.index, V4L2_FIELD_NONE, dstSize, dstSize_uv);
 
 		num_frames--;
+		frame_no++;
 
 		printf("frames left %d\n", num_frames);
 	}
