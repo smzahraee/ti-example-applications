@@ -210,8 +210,10 @@ int allocBuffers(
 	fmt.fmt.pix_mp.pixelformat = fourcc;
 	fmt.fmt.pix_mp.colorspace = clrspc;
 
-	if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE && interlace)
+	if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE && interlace == 1)
 		fmt.fmt.pix_mp.field = V4L2_FIELD_ALTERNATE;
+	else if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE && interlace == 2)
+		fmt.fmt.pix_mp.field = V4L2_FIELD_SEQ_TB;
 	else
 		fmt.fmt.pix_mp.field = V4L2_FIELD_ANY;
 
@@ -564,14 +566,19 @@ int main (
 
 	/**	Read  into the OUTPUT  buffers from fin file	*/
 
-	field = V4L2_FIELD_TOP;
+	if (interlace == 2)
+		field = V4L2_FIELD_SEQ_TB;
+	else
+		field = V4L2_FIELD_TOP;
 	for (i = 0; i < src_numbuf && i < num_frames; i++) {
 		do_read("Y plane", fin, srcBuffers[i], srcSize);
 		if (src_coplanar)
 			do_read("UV plane", fin, srcBuffers_uv[i], srcSize_uv);
 
 		queue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, i, field, srcSize, srcSize_uv);
-		if (field == V4L2_FIELD_TOP)
+		if (interlace == 2)
+			field = V4L2_FIELD_SEQ_TB;
+		else if (field == V4L2_FIELD_TOP)
 			field = V4L2_FIELD_BOTTOM;
 		else
 			field = V4L2_FIELD_TOP;
@@ -588,6 +595,7 @@ int main (
 		struct v4l2_buffer buf;
 		struct v4l2_plane buf_planes[2];
 		int last = num_frames == 1 ? 1 : 0;
+		int iter = interlace == 2? 2 : 1;
 
 		/* DEI: Do not Dequeue Source buffers immediately
 		 * De*interlacer keeps last two buffers in use */
@@ -610,29 +618,32 @@ int main (
 			}
 
 		}
-		/* Dequeue progressive frame from CAPTURE stream
-		 * write to the file and queue one empty buffer */
-		dequeue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, &buf, buf_planes);
-		printf("dequeued dest buffer with index %d\n", buf.index);
 
-		gettimeofday(&now, NULL);
-		latency = now.tv_usec - buf.timestamp.tv_usec;
-		if(latency < 0)
-			latency += 1000000;
-		latency += (now.tv_sec - buf.timestamp.tv_sec) * 1000000;
-		printf("Latency = %7dus", latency);
+		while(iter--) {
+			/* Dequeue progressive frame from CAPTURE stream
+			 * write to the file and queue one empty buffer */
+			dequeue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, &buf, buf_planes);
+			printf("dequeued dest buffer with index %d\n", buf.index);
 
-		do_write("Y plane", fout, dstBuffers[buf.index], dstSize);
-		if (dst_coplanar)
-			do_write("UV plane", fout, dstBuffers_uv[buf.index], dstSize_uv);
+			gettimeofday(&now, NULL);
+			latency = now.tv_usec - buf.timestamp.tv_usec;
+			if(latency < 0)
+				latency += 1000000;
+			latency += (now.tv_sec - buf.timestamp.tv_sec) * 1000000;
+			printf("Latency = %7dus", latency);
 
-		if (!last)
-			queue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, buf.index, V4L2_FIELD_NONE, dstSize, dstSize_uv);
+			do_write("Y plane", fout, dstBuffers[buf.index], dstSize);
+			if (dst_coplanar)
+				do_write("UV plane", fout, dstBuffers_uv[buf.index], dstSize_uv);
 
-		num_frames--;
-		frame_no++;
+			if (!last)
+				queue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, buf.index, V4L2_FIELD_NONE, dstSize, dstSize_uv);
 
-		printf("frames left %d\n", num_frames);
+			num_frames--;
+			frame_no++;
+
+			printf("frames left %d\n", num_frames);
+		}
 	}
 
 	/* Driver cleanup */
