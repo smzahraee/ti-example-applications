@@ -115,6 +115,12 @@ int describeFormat (
 		*coplanar = 0;
 		*clrspc = V4L2_COLORSPACE_SRGB;
 
+	} else if (strcmp (format, "rgb565") == 0) {
+		*fourcc = V4L2_PIX_FMT_RGB565;
+		*size = height * width * 2;
+		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SRGB;
+
 	} else if (strcmp (format, "yuv444") == 0) {
 		*fourcc = V4L2_PIX_FMT_YUV444;
 		*size = height * width * 3;
