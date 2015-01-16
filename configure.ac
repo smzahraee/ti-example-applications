@@ -42,20 +42,24 @@ PKG_CHECK_MODULES(GTHREAD, gthread-2.0)
 
 dnl Check for the required version of GStreamer core (and gst-plugins-base)
 dnl This will export GST_CFLAGS and GST_LIBS variables for use in Makefile.am
-PKG_CHECK_MODULES(GST, [
-  gstreamer-0.10 >= $GST_REQUIRED
-], [
-  AC_SUBST(GST_CFLAGS)
-  AC_SUBST(GST_LIBS)
-], [
-  AC_MSG_ERROR([
-      You need to install or upgrade the GStreamer development
-      packages on your system. On debian-based systems these are
-      libgstreamer0.10-dev and libgstreamer-plugins-base0.10-dev.
-      on RPM-based systems gstreamer0.10-devel, libgstreamer0.10-devel
-      or similar. The minimum version required is $GST_REQUIRED.
-  ])
-])
+AC_ARG_ENABLE(gst, AC_HELP_STRING([--disable-gst], [GStreamer tests are
+enabled by default. To disable gstreamer tests --disable-gst
+default:yes)]), [GST_ENABLE=$enableval], [GST_ENABLE=yes]) AM_CONDITIONAL(HAVE_GST, [test "x$GST_ENABLE" = xyes]) if test "x$GST_ENABLE" = xyes; then
+        PKG_CHECK_MODULES(GST, [
+          gstreamer-0.10 >= $GST_REQUIRED
+        ], [
+          AC_SUBST(GST_CFLAGS)
+          AC_SUBST(GST_LIBS)
+        ], [
+          AC_MSG_ERROR([
+              You need to install or upgrade the GStreamer development
+              packages on your system. On debian-based systems these are
+              libgstreamer0.10-dev and libgstreamer-plugins-base0.10-dev.
+              on RPM-based systems gstreamer0.10-devel, libgstreamer0.10-devel
+              or similar. The minimum version required is $GST_REQUIRED.
+          ])
+        ])
+fi
 
 # Checks for header files.
 
