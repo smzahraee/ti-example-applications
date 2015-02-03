@@ -2,12 +2,12 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.68])
-AC_INIT(example-apps, 0.1, https://git.ti.com/glsdk/example-applications)
+AC_INIT(example-apps, 1.0, https://git.ti.com/glsdk/example-applications)
 AC_CONFIG_SRCDIR([Makefile.am])
 AC_CONFIG_HEADERS([config.h])
 
 dnl required versions of gstreamer and plugins-base
-GST_REQUIRED=0.10.30
+GST_REQUIRED=1.2.3
 
 #Initialize automake
 AM_INIT_AUTOMAKE([foreign dist-bzip2])
@@ -46,7 +46,7 @@ AC_ARG_ENABLE(gst, AC_HELP_STRING([--disable-gst], [GStreamer tests are
 enabled by default. To disable gstreamer tests --disable-gst
 default:yes)]), [GST_ENABLE=$enableval], [GST_ENABLE=yes]) AM_CONDITIONAL(HAVE_GST, [test "x$GST_ENABLE" = xyes]) if test "x$GST_ENABLE" = xyes; then
         PKG_CHECK_MODULES(GST, [
-          gstreamer-0.10 >= $GST_REQUIRED
+          gstreamer-1.0 >= $GST_REQUIRED
         ], [
           AC_SUBST(GST_CFLAGS)
           AC_SUBST(GST_LIBS)
@@ -54,8 +54,8 @@ default:yes)]), [GST_ENABLE=$enableval], [GST_ENABLE=yes]) AM_CONDITIONAL(HAVE_G
           AC_MSG_ERROR([
               You need to install or upgrade the GStreamer development
               packages on your system. On debian-based systems these are
-              libgstreamer0.10-dev and libgstreamer-plugins-base0.10-dev.
-              on RPM-based systems gstreamer0.10-devel, libgstreamer0.10-devel
+              libgstreamer1.0-dev and libgstreamer-plugins-base1.0-dev.
+              on RPM-based systems gstreamer1.0-devel, libgstreamer1.0-devel
               or similar. The minimum version required is $GST_REQUIRED.
           ])
         ])

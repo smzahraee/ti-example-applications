@@ -144,8 +144,8 @@ create_pipeline (char *arg)
   if (filter == NULL)
     printf ("Could not create 'capsfilter' element\r\n");
   filtercaps =
-      gst_caps_new_simple ("video/x-raw-yuv", "format", GST_TYPE_FOURCC,
-      GST_MAKE_FOURCC ('N', 'V', '1', '2'), "width", G_TYPE_INT, scale_w,
+      gst_caps_new_simple ("video/x-raw", "format", G_TYPE_STRING,
+      "NV12", "width", G_TYPE_INT, scale_w,
       "height", G_TYPE_INT, scale_h, NULL);
   g_object_set (G_OBJECT (filter), "caps", filtercaps, NULL);
   gst_caps_unref (filtercaps);
@@ -247,14 +247,6 @@ main (gint argc, gchar * argv[])
   }
   printf ("Using videosink=%s\n", sinkname);
 
-// To detect memory leaks
-  if (!gst_alloc_trace_available ()) {
-    printf ("Trace not available (recompile with trace enabled).\n");
-  } else {
-    gst_alloc_trace_set_flags_all (GST_ALLOC_TRACE_LIVE |
-        GST_ALLOC_TRACE_MEM_LIVE);
-    gst_alloc_trace_print_live ();
-  }
   while (!sigtermed) {
     if (in == stdin) {
       fflush (stdout);
@@ -378,7 +370,6 @@ main (gint argc, gchar * argv[])
     }
   }
   sleep (1);
-  gst_alloc_trace_print_live ();
   {
     char command[256];
     sprintf (command, "ls -l //proc//%d//fd//", getpid ());
