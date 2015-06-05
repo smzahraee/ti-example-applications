@@ -301,24 +301,30 @@ main (gint argc, gchar * argv[])
     }
 
     else if (3 <= n && 0 == strcmp ("seek", args[0])) {
+	  float r;
       i = atoi (args[1]);
       time = atoi (args[2]);
-      rate = (n == 3) ? 1 : atoi (args[3]);
+      if (n == 3) r = 1.0;
+	  else sscanf(args[3], "%f", &r);
+
       if (p[i]) {
-        if (rate == 1) {
-          gst_element_seek_simple (p[i], GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
+        if (r == 1) {
+          gst_element_seek_simple (p[i], GST_FORMAT_TIME,
+		  GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT,
               time * GST_SECOND);
         } else {
-          if (rate > 1) {
+          if (r > 0) {
             seek_event =
-                gst_event_new_seek (rate, GST_FORMAT_TIME,
-                GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE, GST_SEEK_TYPE_SET,
-                time * GST_SECOND, GST_SEEK_TYPE_NONE, 0);
+                gst_event_new_seek (r, GST_FORMAT_TIME,
+                GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT | GST_SEEK_FLAG_SKIP,
+				GST_SEEK_TYPE_SET, time * GST_SECOND,
+				GST_SEEK_TYPE_NONE, 0);
           } else {
             seek_event =
-                gst_event_new_seek (rate, GST_FORMAT_TIME,
-                GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE, GST_SEEK_TYPE_SET,
-                0, GST_SEEK_TYPE_SET, time * GST_SECOND);
+                gst_event_new_seek (r, GST_FORMAT_TIME,
+                GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT | GST_SEEK_FLAG_SKIP,
+				GST_SEEK_TYPE_SET, 0,
+				GST_SEEK_TYPE_SET, time * GST_SECOND);
           }
           gst_element_send_event (p[i], seek_event);
         }
