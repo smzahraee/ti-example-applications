@@ -63,7 +63,7 @@ pad_added_cb (GstElement * element, GstPad * pad, void *data)
 static const char *sinkname = "kmssink";
 static gboolean use_vpe = TRUE;
 static gboolean use_scaling = TRUE;
-static gint scale_w = 800, scale_h = 480;
+static gint scale_w = 1280, scale_h = 800;
 static gboolean use_avsync = TRUE;
 static GstElement *
 create_pipeline (char *arg)
@@ -88,7 +88,13 @@ create_pipeline (char *arg)
     demux_name = "asfdemux";
 
   else if (NULL != strcasestr (arg, ".ts"))
-    demux_name = "mpegtsdemux";
+    demux_name = "tsdemux";
+
+  else if (NULL != strcasestr (arg, ".mpg"))
+    demux_name = "mpegpsdemux";
+
+  else if (NULL != strcasestr (arg, ".flv"))
+    demux_name = "flvdemux";
 
   else if (NULL != strcasestr (arg, ".avi"))
     demux_name = "avidemux";
@@ -149,7 +155,7 @@ create_pipeline (char *arg)
       "height", G_TYPE_INT, scale_h, NULL);
   g_object_set (G_OBJECT (filter), "caps", filtercaps, NULL);
   gst_caps_unref (filtercaps);
-  printf ("set locaticn to : %s\n", arg);
+  printf ("set location to : %s\n", arg);
 
   // ================= Add capabilities and properties
   // g_object_set(G_OBJECT (scaler), "num-input-buffers", 24, NULL);
@@ -189,7 +195,6 @@ gint
 main (gint argc, gchar * argv[])
 {
   FILE *in = stdin;
-  fd_set f;
   char *line = NULL;
   char linebuf[1024];
   char *args[10];
@@ -248,12 +253,10 @@ main (gint argc, gchar * argv[])
   printf ("Using videosink=%s\n", sinkname);
 
   while (!sigtermed) {
+    fflush(stdout);
     if (in == stdin) {
-      fflush (stdout);
-      FD_ZERO (&f);
-      FD_SET (0, &f);
+      printf ("<Enter ip> ");
     }
-    printf ("<Enter ip> ");
     line = fgets (linebuf, 1023, in);
     if (!line)
       continue;
