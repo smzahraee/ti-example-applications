@@ -119,19 +119,25 @@ static void get_drm_connector(struct device *dev)
 				dev->hdmi_con = con;
 				printf("hdmi connector id = %d\n",
 					dev->hdmi_con->connector_id);
-				break;
+				if (dev->lcd_con)
+					break;
+				else
+					continue;
 			} else {
 				dev->lcd_con = con;
 				printf("lcd connector id = %d\n",
 					dev->lcd_con->connector_id);
-				continue;
+				if (dev->hdmi_con)
+					break;
+				else
+					continue;
 			}
 		}
 		drmModeFreeConnector(con);
 	}
 
 	if (i == dev->res->count_connectors) {
-		error("No active connector found!\n");
+		error("No active lcd or hdmi connector found!\n");
 		exit(0);
 	}
 }
@@ -157,18 +163,24 @@ static void get_drm_encoder(struct device *dev)
 			dev->lcd_enc = enc;
 			printf("lcd encoder id = %d\n",
 				dev->lcd_enc->encoder_id);
-			continue;
+			if(dev->hdmi_enc)
+				break;
+			else
+				continue;
 		} else if (enc->encoder_id == dev->hdmi_con->encoder_id) {
 			dev->hdmi_enc = enc;
 			printf("hdmi encoder id = %d\n",
 				dev->hdmi_enc->encoder_id);
-			break;
+			if(dev->lcd_enc)
+				break;
+			else
+				continue;
 		}
 		drmModeFreeEncoder(enc);
 	}
 
 	if (i == dev->res->count_encoders) {
-		error("No active encoder found!\n");
+		error("No active lcd or hdmi encoder found!\n");
 		exit(0);
 	}
 }
