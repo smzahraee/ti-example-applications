@@ -43,7 +43,7 @@ struct sensor_data default_data = {
 struct app_params default_prms = {
 	.width = 1280,
 	.height = 720,
-	.code = 0,
+	.code = 1,
 	.field = 'p',
 	.fps = 30,
 	.stream_on = 1,
@@ -57,9 +57,10 @@ void app_usage() {
 	printf("Options:-\n");
 	printf("  --dev     <device name> (e.g. /dev/cam1)\n");
 	printf("  --stream  <val> (1 or 0 to turn on or off the sensor)\n");
-	printf("  --fmt     <width>x<height>:<field>:<code>:<fps>\n");
+	printf("  --fmt     <width>x<height><field>:<code>:<fps>\n");
 	printf("             * field should be 'i' or 'p' for interlaced or progressive\n");
 	printf("             * code is the index of the enumerated pixel codes\n");
+	printf("             * e.g. --fmt 1280x720p:1:30\n");
 	printf("  --info    Only print the enumerated formats and get_format\n");
 	printf("  --help    Show this help and exit\n");
 	printf("\n");
@@ -165,11 +166,17 @@ int enum_fmts(struct sensor_data *data) {
 
 static uint32_t known_fmts[] = {
 	V4L2_MBUS_FMT_YUYV8_2X8,
+	V4L2_MBUS_FMT_UYVY8_2X8,
+	V4L2_MBUS_FMT_YVYU8_2X8,
+	V4L2_MBUS_FMT_VYUY8_2X8,
 	V4L2_MBUS_FMT_YUYV10_2X10,
 };
 
 static char *known_fmt_desc[] = {
-	"YUYV8_2X8 - 8 bit YUYV",
+	"YUYV8_2X8 - 8 bit Y U Y V",
+	"UYVY8_2X8 - 8 bit U Y V Y",
+	"YVYU8_2X8 - 8 bit Y V Y U",
+	"VYUY8_2X8 - 8 bit V Y U Y",
 	"YUYV10_2X10 - 10 bit YUYV",
 };
 
