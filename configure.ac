@@ -67,5 +67,5 @@ fi
 
 # Checks for library functions.
 
-AC_CONFIG_FILES([Makefile vpe/Makefile vip/Makefile drm-tests/Makefile thermal/Makefile messageq/messageq_ipc_linux/Makefile gst/Makefile])
+AC_CONFIG_FILES([Makefile vpe/Makefile vip/Makefile drm-tests/Makefile thermal/Makefile messageq/messageq_ipc_linux/Makefile gst/Makefile bandwidth-tool/Makefile])
 AC_OUTPUT
