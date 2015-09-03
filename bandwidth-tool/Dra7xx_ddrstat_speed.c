@@ -336,6 +336,89 @@ void bandwidth_usage() {
 }
 
 
+void print_usage()
+{
+     printf("USAGE: glsdkstatcoll -f config.ini\n"
+             "\n There should be another file called initiators.cfg that should be present in the same directory\n"
+             "\n LIST OF INITIATORS \n"
+             "\n STATCOL_EMIF1_SYS"
+             "\n STATCOL_EMIF2_SYS"
+             "\n STATCOL_MA_MPU_P1"
+             "\n STATCOL_MA_MPU_P2"
+             "\n STATCOL_MPU1"
+             "\n STATCOL_MMU1"
+             "\n STATCOL_TPTC_RD1"
+             "\n STATCOL_TPTC_WR1"
+             "\n STATCOL_TPTC_RD2"
+             "\n STATCOL_TPTC_WR2"
+             "\n STATCOL_VIP1_P1"
+             "\n STATCOL_VIP1_P2"
+             "\n STATCOL_VIP2_P1"
+             "\n STATCOL_VIP2_P2"
+             "\n STATCOL_VIP3_P1"
+             "\n STATCOL_VIP3_P2"
+             "\n STATCOL_VPE_P1"
+             "\n STATCOL_VPE_P2"
+             "\n STATCOL_EVE1_TC0"
+             "\n STATCOL_EVE1_TC1"
+             "\n STATCOL_EVE2_TC0"
+             "\n STATCOL_EVE2_TC1"
+             "\n STATCOL_EVE3_TC0"
+             "\n STATCOL_EVE3_TC1"
+             "\n STATCOL_EVE4_TC0"
+             "\n STATCOL_EVE4_TC1"
+             "\n STATCOL_DSP1_MDMA"
+             "\n STATCOL_DSP1_EDMA"
+             "\n STATCOL_DSP2_MDMA"
+             "\n STATCOL_DSP2_EDMA"
+             "\n STATCOL_IVA"
+             "\n STATCOL_GPU_P1"
+             "\n STATCOL_GPU_P2"
+             "\n STATCOL_BB2D_P1"
+             "\n STATCOL_DSS"
+             "\n STATCOL_CSI2_2"
+             "\n STATCOL_MMU2"
+             "\n STATCOL_IPU1"
+             "\n STATCOL_IPU2"
+             "\n STATCOL_DMA_SYSTEM_RD"
+             "\n STATCOL_DMA_SYSTEM_WR"
+             "\n STATCOL_CSI2_1"
+             "\n STATCOL_USB3_SS"
+             "\n STATCOL_USB2_SS"
+             "\n STATCOL_USB2_ULPI_SS1"
+             "\n STATCOL_USB2_ULPI_SS2"
+             "\n STATCOL_PCIE_SS1"
+             "\n STATCOL_PCIE_SS2"
+             "\n STATCOL_DSP1_CFG"
+             "\n STATCOL_DSP2_CFG"
+             "\n STATCOL_GMAC_SW"
+             "\n STATCOL_PRUSS1_P1"
+             "\n STATCOL_PRUSS1_P2"
+             "\n STATCOL_PRUSS2_P1"
+             "\n STATCOL_PRUSS2_P2"
+             "\n STATCOL_DMA_CRYPTO_RD"
+             "\n STATCOL_DMA_CRYPTO_WR"
+             "\n STATCOL_MPU2"
+             "\n STATCOL_MMC1"
+             "\n STATCOL_MMC2"
+             "\n STATCOL_SATA"
+             "\n STATCOL_MLBSS"
+             "\n STATCOL_BB2D_P2"
+             "\n STATCOL_IEEE1500"
+             "\n STATCOL_DBG"
+             "\n STATCOL_VCP1"
+             "\n STATCOL_OCMC_RAM1"
+             "\n STATCOL_OCMC_RAM2"
+             "\n STATCOL_OCMC_RAM3"
+             "\n STATCOL_GPMC"
+             "\n STATCOL_MCASP1"
+             "\n STATCOL_MCASP2"
+             "\n STATCOL_MCASP3"
+             "\n STATCOL_VCP2"
+             "\n STATCOL_MA \n\n");
+
+}
+
 int main(int argc, char **argv)
 {
     int option;
@@ -348,7 +431,7 @@ int main(int argc, char **argv)
     /* Initialize this to turn off verbosity of getopt */
     opterr = 0;
 
-    while ((option = getopt (argc, argv, "df:")) != -1)
+    while ((option = getopt (argc, argv, "hdf:")) != -1)
     {
 	    switch(option)
 	    {
@@ -358,6 +441,9 @@ int main(int argc, char **argv)
 		    case 'd':
 			    debug=1;
 			    break;
+		    case 'h':
+			    print_usage();
+                            exit(0);
 		    default:
 			    printf("Invalid option.. Exiting\n");
 			    exit(0);
@@ -366,7 +452,9 @@ int main(int argc, char **argv)
 
     fp = fopen(config_file_path, "r");
     if (fp == NULL) {
-	    fprintf(stderr, "couldn't open the specified file\n");
+	    fprintf(stderr, "couldn't open the specified config file.. \n");
+	    fprintf(stderr, "USAGE: ./glsdkstatcoll -f config.ini\n");
+	    fprintf(stderr, "\n\n For help:  ./glsdkstatcoll -h \n");
 	    return -1;
     }
 
