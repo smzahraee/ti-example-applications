@@ -65,6 +65,50 @@ static gboolean use_vpe = TRUE;
 static gboolean use_scaling = TRUE;
 static gint scale_w = 1280, scale_h = 800;
 static gboolean use_avsync = TRUE;
+
+static GstElement *
+create_pipeline_capture (char *arg)
+{
+  GstElement *pipeline, *src1, *vpe, *filter, *vsink;
+  GstCaps *filtercaps;
+
+  printf ("Creating pipeline with v4l2src\n");
+  pipeline = gst_pipeline_new ("capt-pipeline");
+  src1 = gst_element_factory_make ("v4l2src", "src1");
+  if (src1 == NULL)
+    printf ("Could not create 'v4l2src' element\r\n");
+  vpe = gst_element_factory_make ("vpe", "vpe");
+  if (vpe == NULL)
+    printf ("Could not create 'vpe' element\r\n");
+  vsink = gst_element_factory_make (sinkname, "kmssink");
+  if (vsink == NULL)
+    printf ("Could not create '%s' element\r\n", sinkname);
+  filter =
+      gst_element_factory_make (use_scaling ? "capsfilter" : "identity",
+      "filter");
+  if (filter == NULL)
+    printf ("Could not create 'capsfilter' element\r\n");
+  filtercaps =
+      gst_caps_new_simple ("video/x-raw", "format", G_TYPE_STRING,
+      "NV12", "width", G_TYPE_INT, scale_w,
+      "height", G_TYPE_INT, scale_h, NULL);
+  g_object_set (G_OBJECT (filter), "caps", filtercaps, NULL);
+  gst_caps_unref (filtercaps);
+
+  g_object_set (G_OBJECT (src1), "device", arg, NULL);
+  g_object_set (G_OBJECT (src1), "io-mode", 4, NULL);
+
+  // ================= Put pipeline together
+  gst_bin_add_many (GST_BIN (pipeline), src1, vpe, vsink, filter, NULL);
+  gst_element_link_many (src1, vpe, filter, vsink, NULL);
+
+  // ================= Run
+  printf ("Set Play Mode ...\r\n");
+  gst_element_set_state (pipeline, GST_STATE_PLAYING);
+
+  return pipeline;
+}
+
 static GstElement *
 create_pipeline (char *arg)
 {
@@ -75,7 +119,9 @@ create_pipeline (char *arg)
   GstElement *queue, *vsink;
   GstCaps *filtercaps;
   const char *decoder_name, *parser_name, *demux_name;
-  if (NULL != strcasestr (arg, ".mkv"))
+  if (strcmp(arg, "/dev/video") >= 0)
+    return create_pipeline_capture(arg);
+  else if (NULL != strcasestr (arg, ".mkv"))
     demux_name = "matroskademux";
 
   else if (NULL != strcasestr (arg, ".mp4"))
@@ -282,6 +328,7 @@ main (gint argc, gchar * argv[])
     else if (2 == n && 0 == strcmp ("stop", args[0])) {
       i = atoi (args[1]);
       if (p[i]) {
+        printf ("Stoping pipeline %d\n", i);
         gst_element_set_state (p[i], GST_STATE_NULL);
         gst_object_unref (p[i]);
         p[i] = NULL;
@@ -291,12 +338,14 @@ main (gint argc, gchar * argv[])
     else if (2 == n && 0 == strcmp ("pause", args[0])) {
       i = atoi (args[1]);
       if (p[i])
+        printf ("Pausing pipeline %d\n", i);
         gst_element_set_state (p[i], GST_STATE_PAUSED);
     }
 
     else if (2 == n && 0 == strcmp ("resume", args[0])) {
       i = atoi (args[1]);
       if (p[i])
+        printf ("Resuming pipeline %d\n", i);
         gst_element_set_state (p[i], GST_STATE_PLAYING);
     }
 
@@ -341,7 +390,15 @@ main (gint argc, gchar * argv[])
     }
 
     else if (2 == n && 0 == strcmp ("sleep", args[0])) {
-      sleep (atoi (args[1]));
+      i = atoi (args[1]);
+      printf ("Sleeping for %d sec\n", i);
+      sleep (i);
+    }
+
+    else if (2 == n && 0 == strcmp ("msleep", args[0])) {
+      i = atoi (args[1]);
+      printf ("Sleeping for %d msec\n", i);
+      usleep (i * 1000);
     }
 
     else if (2 == n && 0 == strcmp ("rewind", args[0])) {
