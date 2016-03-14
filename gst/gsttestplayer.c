@@ -119,7 +119,7 @@ create_pipeline (char *arg)
   GstElement *queue, *vsink;
   GstCaps *filtercaps;
   const char *decoder_name, *parser_name, *demux_name;
-  if (strcmp(arg, "/dev/video") >= 0)
+  if (strstr(arg, "/dev/video") != NULL)
     return create_pipeline_capture(arg);
   else if (NULL != strcasestr (arg, ".mkv"))
     demux_name = "matroskademux";
