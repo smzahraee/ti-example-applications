@@ -18,6 +18,7 @@ PKG_PROG_PKG_CONFIG()
 
 # Checks for programs.
 AC_PROG_CC
+AC_PROG_CXX
 
 #Test the C compiler
 AC_LANG_C

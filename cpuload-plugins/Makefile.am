@@ -6,7 +6,6 @@ mpuload_CFLAGS = \
 mpuload_SOURCES = mpuload.c
 
 
-pvrscope_CPPFLAGS = -I. -o libPVRScopeDeveloper.a -lrt -lm -lpthread -ldl
-
-pvrscope_SOURCES = pvrscope.c 
-
+pvrscope_CXXFLAGS = -I. -lrt -lm -lpthread -ldl
+pvrscope_SOURCES = pvrscope.cpp
+LIBS = libPVRScopeDeveloper.a
