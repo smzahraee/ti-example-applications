@@ -10,15 +10,21 @@ dnl required versions of gstreamer and plugins-base
 GST_REQUIRED=1.2.3
 
 #Initialize automake
-AM_INIT_AUTOMAKE([foreign dist-bzip2])
-AM_MAINTAINER_MODE
+AM_INIT_AUTOMAKE([foreign dist-bzip2 silent-rules subdir-objects -Wall])
+AM_MAINTAINER_MODE([enable])
 
+# Enable quiet compiles on automake 1.11.
+m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([no])])
+
+# Initialize libtool
+LT_INIT
 #Check the version of pkg-config
 PKG_PROG_PKG_CONFIG()
 
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_CXX
+AM_PROG_CC_C_O
 
 #Test the C compiler
 AC_LANG_C
@@ -27,6 +33,8 @@ AC_LANG_C
 
 #Checks the presence of packages
 PKG_CHECK_MODULES(DRM, libdrm libdrm_omap)
+PKG_CHECK_MODULES(WAYLAND, wayland-egl wayland-cursor wayland-client)
+PKG_CHECK_MODULES(UDEV, libudev)
 
 PKG_CHECK_MODULES(KMS, libkms)
 
