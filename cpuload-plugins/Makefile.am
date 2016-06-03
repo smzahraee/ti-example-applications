@@ -8,7 +8,7 @@ mpuload_SOURCES = mpuload.c
 
 pvrscope_CXXFLAGS = -I. -lrt -lm -lpthread -ldl
 pvrscope_SOURCES = pvrscope.cpp
-LIBS = libPVRScopeDeveloper.a
+LIBS = $(top_srcdir)/cpuload-plugins/libPVRScopeDeveloper.a
 
 
 # Specify any libraries that need to be built here.  Follow the convention
