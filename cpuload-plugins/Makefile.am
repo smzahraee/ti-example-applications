@@ -1,10 +1,13 @@
-bin_PROGRAMS = pvrscope mpuload read32k_driver readproc waitforweston
+bin_PROGRAMS = pvrscope mpuload read32k_driver readproc waitforweston rprocinfo
 
 mpuload_CFLAGS = \
 	-O0 -g --static 
 
 mpuload_SOURCES = mpuload.c
 
+rprocinfo_CFLAGS = -O0 -g @DRM_CFLAGS@ @DCE_CFLAGS@
+rprocinfo_LDFLAGS = @DCE_LIBS@ -lpthread
+rprocinfo_SOURCES = rprocinfo.c
 
 pvrscope_CXXFLAGS = -I. -lrt -lm -lpthread -ldl
 pvrscope_SOURCES = pvrscope.cpp

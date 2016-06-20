@@ -33,6 +33,7 @@ AC_LANG_C
 
 #Checks the presence of packages
 PKG_CHECK_MODULES(DRM, libdrm libdrm_omap)
+PKG_CHECK_MODULES(DCE, libdce)
 PKG_CHECK_MODULES(WAYLAND, wayland-egl wayland-cursor wayland-client)
 PKG_CHECK_MODULES(UDEV, libudev)
 
