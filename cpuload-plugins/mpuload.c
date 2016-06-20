@@ -60,6 +60,14 @@ int main(int argc, char *argv[])
 {
 	int fd=0;
 
+        if(argc != 3) {
+                printf("ERROR: Usage is \
+                        \n mpuload fifoname num_seconds \
+                        \n\n Example: mpuload /tmp/socfifo 100\n");
+                return 0;
+        }
+
+
 	int index = 0;
 	unsigned int NUMBER_OF_LOOPS = atoi(argv[2]);
 	//char *fifo = (char *)"/tmp/nonlinuxfifo";
