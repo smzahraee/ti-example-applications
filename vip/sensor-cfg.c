@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <linux/unistd.h>
 #include <fcntl.h>
+#include <string.h>
 
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
@@ -250,6 +251,7 @@ int start_streaming(struct sensor_data *data) {
 		ERR("Failed to stream ON\n");
 		return -5;
 	}
+	return ret;
 }
 
 int stop_streaming(struct sensor_data *data) {
@@ -262,6 +264,7 @@ int stop_streaming(struct sensor_data *data) {
 		ERR("Failed to stream OFF\n");
 		return -6;
 	}
+	return ret;
 }
 
 int main(int argc, char *argv[]) {
