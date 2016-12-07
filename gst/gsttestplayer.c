@@ -62,7 +62,7 @@ pad_added_cb (GstElement * element, GstPad * pad, void *data)
 
 static const char *sinkname = "kmssink";
 static gboolean use_vpe = TRUE;
-static gboolean use_scaling = TRUE;
+static gboolean use_scaling = FALSE;
 static gint scale_w = 1280, scale_h = 800;
 static gboolean use_avsync = TRUE;
 
@@ -109,13 +109,13 @@ create_pipeline_capture (char *arg)
   return pipeline;
 }
 
+
 static GstElement *
 create_pipeline (char *arg)
 {
   GstElement *src1;
   GstElement *demux;
   GstElement *vdecode, *h264parse, *pipeline, *filter;
-  GstElement *vqueue;
   GstElement *queue, *vsink;
   GstCaps *filtercaps;
   const char *decoder_name, *parser_name, *demux_name;
@@ -187,11 +187,8 @@ create_pipeline (char *arg)
   queue = gst_element_factory_make ("queue", "queue");
   if (queue == NULL)
     printf ("Could not create 'queue' element\r\n");
-  vqueue = gst_element_factory_make ("queue", "vqueue");
-  if (vqueue == NULL)
-    printf ("Could not create 'queue' element\r\n");
   filter =
-      gst_element_factory_make (use_scaling ? "capsfilter" : "identity",
+      gst_element_factory_make (use_scaling ? "capsfilter" : "queue",
       "filter");
   if (filter == NULL)
     printf ("Could not create 'capsfilter' element\r\n");
@@ -212,9 +209,9 @@ create_pipeline (char *arg)
 
   // ================= Put pipeline together
   gst_bin_add_many (GST_BIN (pipeline), src1, demux, h264parse, vdecode,
-      vsink, filter, vqueue, queue, NULL);
-  gst_element_link_many (src1, demux, NULL);
-  gst_element_link_many (h264parse, queue, vdecode, vqueue, filter,
+      vsink, filter, queue, NULL);
+  gst_element_link_many (src1, demux, queue, NULL);
+  gst_element_link_many (h264parse, vdecode, filter,
       vsink, NULL);
   if (!g_signal_connect (demux, "pad-added", G_CALLBACK (pad_added_cb),
           (void *) h264parse))
@@ -276,6 +273,7 @@ main (gint argc, gchar * argv[])
       if ((i + 1) < argc
           && 2 == sscanf (argv[i + 1], "%dx%d", &scale_w, &scale_h)) {
         printf ("Scaling output to %dx%d\n", scale_w, scale_h);
+        use_scaling = TRUE;
       } else {
         use_scaling = FALSE;
         printf ("Not using Scaling...\n");
