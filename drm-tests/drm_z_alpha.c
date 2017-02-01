@@ -135,17 +135,37 @@ static void get_drm_connector(struct device *dev)
 */
 static void get_drm_encoder(struct device *dev)
 {
-	uint32_t i;
+	uint32_t i,j;
 
-	for (i = 0; i < dev->res->count_encoders; ++i) {
+	for (i = 0; i < dev->con->count_encoders; ++i) {
 		dev->enc = drmModeGetEncoder(dev->fd,
-					     dev->res->encoders[i]);
+					     dev->con->encoders[i]);
 		if (!dev->enc)
 			continue;
 
-		if (dev->enc->encoder_id == dev->con->encoder_id)
-			break;
+		/* Take the fisrt one, if none is assigned */
+		if (!dev->con->encoder_id)
+			dev->con->encoder_id = dev->enc->encoder_id;
 
+		if (dev->enc->encoder_id == dev->con->encoder_id) {
+			/* find the first valid CRTC if not assigned */
+			if (!dev->enc->crtc_id) {
+				for (j = 0; j < dev->res->count_crtcs; ++j) {
+					/* check whether this CRTC works with the encoder */
+					if (!(dev->enc->possible_crtcs & (1 << j)))
+						continue;
+
+					dev->enc->crtc_id = dev->res->crtcs[j];
+					break;
+				}
+
+				if ( j  == dev->res->count_crtcs) {
+					error("No active crtc found!\n");
+					exit(0);
+				}
+			}
+			break;
+		}
 		drmModeFreeEncoder(dev->enc);
 	}
 
