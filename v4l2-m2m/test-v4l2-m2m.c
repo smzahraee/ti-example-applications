@@ -31,10 +31,11 @@
  */
 
 /**
- * @file       testvpe.c
+ * @file       test-v4l2-m2m.c
  * @authors    Nikhil Devshatwar <nikhil.nd@ti.com>
  *	       Alaganraj S <alaganraj.s@ti.com>
- * @brief      Example program to test following vpe features,
+ *	       Subhajit Paul <subhajit_paul@ti.com>
+ * @brief      Example program to test following v4l2-m2m features,
  *             deinterlace, scalar, color space conversion.
  *
  * This program is to deinterlace a video file
@@ -100,6 +101,12 @@ int describeFormat (
 	} else if (strcmp (format, "bgr24") == 0) {
 		*fourcc = V4L2_PIX_FMT_BGR24;
 		*size = height * width * 3;
+		*coplanar = 0;
+		*clrspc = V4L2_COLORSPACE_SRGB;
+
+	} else if (strcmp (format, "xbgr32") == 0) {
+		*fourcc = V4L2_PIX_FMT_XBGR32;
+		*size = height * width * 4;
 		*coplanar = 0;
 		*clrspc = V4L2_COLORSPACE_SRGB;
 
@@ -462,7 +469,10 @@ int main (
 	int	argc,
 	char	*argv[])
 {
-	int	i, ret = 0;
+	int	i, ret = 0, is_vpe = 0;
+
+	char	*devname = NULL;
+	struct	v4l2_capability caps; 
 
 	int	srcHeight  = 0, dstHeight = 0;
 	int	srcWidth   = 0, dstWidth  = 0;
@@ -486,9 +496,9 @@ int main (
 	int	latency;
 	int 	field;
 
-	if (argc < 11 || argc > 12) {
+	if (argc < 12 || argc > 13) {
 		printf (
-		"USAGE : <SRCfilename> <SRCWidth> <SRCHeight> <SRCFormat> "
+		"USAGE : <Devicename> <SRCfilename> <SRCWidth> <SRCHeight> <SRCFormat> "
 			"<DSTfilename> <DSTWidth> <DSTHeight> <DSTformat> "
                         "<interlace> <translen> <numframes>[optional]\n");
 
@@ -496,22 +506,23 @@ int main (
 	}
 
 	/** Open input file in read only mode				*/
-	fin		= open (argv[1], O_RDONLY);
-	srcWidth	= atoi (argv[2]);
-	srcHeight	= atoi (argv[3]);
-	describeFormat (argv[4], srcWidth, srcHeight, &srcSize, &srcFourcc, &src_coplanar, &src_colorspace);
+	devname		= argv[1];
+	fin		= open (argv[2], O_RDONLY);
+	srcWidth	= atoi (argv[3]);
+	srcHeight	= atoi (argv[4]);
+	describeFormat (argv[5], srcWidth, srcHeight, &srcSize, &srcFourcc, &src_coplanar, &src_colorspace);
 
 	/** Open output file in write mode Create the file if not present	*/
-	fout		= open (argv[5], O_WRONLY | O_CREAT | O_TRUNC, 777);
-	dstWidth	= atoi (argv[6]);
-	dstHeight	= atoi (argv[7]);
-	describeFormat (argv[8], dstWidth, dstHeight, &dstSize, &dstFourcc, &dst_coplanar, &dst_colorspace);
+	fout		= open (argv[6], O_WRONLY | O_CREAT | O_TRUNC, 777);
+	dstWidth	= atoi (argv[7]);
+	dstHeight	= atoi (argv[8]);
+	describeFormat (argv[9], dstWidth, dstHeight, &dstSize, &dstFourcc, &dst_coplanar, &dst_colorspace);
 
-	interlace = atoi (argv[9]);
-	translen = atoi (argv[10]);
+	interlace = atoi (argv[10]);
+	translen = atoi (argv[11]);
 
-	if (argc == 12)
-		num_frames = atoi (argv[11]);
+	if (argc == 13)
+		num_frames = atoi (argv[12]);
 
 	printf ("Input  @ %d = %d x %d , %d\nOutput @ %d = %d x %d , %d\n",
 		fin,  srcWidth, srcHeight, srcFourcc,
@@ -528,20 +539,31 @@ int main (
 		Files are ready Now
 	*************************************/
 
-	fd = open("/dev/video0",O_RDWR);
+	fd = open(devname,O_RDWR);
 	if(fd < 0) {
 		pexit("Can't open device\n");
 	}
 
-	/* Number of buffers to process in one transaction - translen */
-	memset(&ctrl, 0, sizeof(ctrl));
-	ctrl.id = V4L2_CID_TRANS_NUM_BUFS;
-	ctrl.value = translen;
-	ret = ioctl(fd, VIDIOC_S_CTRL, &ctrl);
+	memset(&caps, 0, sizeof(caps));
+	ret = ioctl(fd, VIDIOC_QUERYCAP, &caps);
 	if (ret < 0)
-		pexit("Can't set translen control\n");
+		pexit("Can't query device capabilities\n");
+	if(strcmp(caps.driver, "vpe") == 0)
+		is_vpe = 1;
 
-	printf("S_CTRL success\n");
+
+	if(is_vpe) {
+		/* Number of buffers to process in one transaction - translen */
+		memset(&ctrl, 0, sizeof(ctrl));
+		ctrl.id = V4L2_CID_TRANS_NUM_BUFS;
+		ctrl.value = translen;
+		ret = ioctl(fd, VIDIOC_S_CTRL, &ctrl);
+		if (ret < 0)
+			pexit("Can't set translen control\n");
+
+		printf("S_CTRL success\n");
+	}
+
 	/* Allocate buffers for CAPTURE and OUTPUT stream */
 	ret = allocBuffers (V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, srcWidth,
 		srcHeight, src_coplanar, src_colorspace, &srcSize, &srcSize_uv,
