@@ -464,7 +464,35 @@ void do_write (char *str, int fd, void *addr, int size) {
 		printf ("Total bytes written %s = %d\n", str, size);
 	}
 }
+static void parse_crop(const char *p, struct v4l2_selection *s)
+{
+	char *end;
 
+	p = p+5;
+
+	s->r.width = strtoul(p, &end, 10);
+	if (*end != 'x')
+		goto fail;
+
+	p = end + 1;
+	s->r.height = strtoul(p, &end, 10);
+	if (*end != '@')
+		goto fail;
+
+	p = end + 1;
+	s->r.left = strtoul(p, &end, 10);
+	if (*end != ',')
+		goto fail;
+
+	p = end + 1;
+	s->r.top = strtoul(p, &end, 10);
+
+	return;
+
+fail:
+	s->r.height = 0;
+	return;
+}
 int main (
 	int	argc,
 	char	*argv[])
@@ -492,15 +520,17 @@ int main (
 	int	translen = 3;
 	int	frame_no = 0;
 	struct	v4l2_control ctrl;
+	struct	v4l2_selection selection;
 	struct	timeval now;
 	int	latency;
 	int 	field;
 
-	if (argc < 12 || argc > 13) {
+	if (argc < 12 || argc > 14) {
 		printf (
 		"USAGE : <Devicename> <SRCfilename> <SRCWidth> <SRCHeight> <SRCFormat> "
 			"<DSTfilename> <DSTWidth> <DSTHeight> <DSTformat> "
-                        "<interlace> <translen> <numframes>[optional]\n");
+                        "<interlace> <translen> <numframes>[optional] "
+			"crop=widthxheight@x,y[optional]\n");
 
 		return 1;
 	}
@@ -521,15 +551,29 @@ int main (
 	interlace = atoi (argv[10]);
 	translen = atoi (argv[11]);
 
-	if (argc == 13)
-		num_frames = atoi (argv[12]);
+	selection.r.top = selection.r.left = 0;
+	selection.r.width = 0;
+	selection.r.height = 0;
+	selection.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+	selection.target = V4L2_SEL_TGT_CROP_ACTIVE;
 
+	if (argc == 13 && !strstr(argv[12], "crop="))
+		num_frames = atoi (argv[12]);
+	else if (argc == 13 && strstr(argv[12], "crop="))
+		parse_crop (argv[12], &selection);
+	else if(argc == 14) {
+		num_frames = atoi (argv[12]);
+		if(strstr(argv[13], "crop="))
+			parse_crop (argv[13], &selection);
+	}
 	printf ("Input  @ %d = %d x %d , %d\nOutput @ %d = %d x %d , %d\n",
 		fin,  srcWidth, srcHeight, srcFourcc,
 		fout, dstWidth, dstHeight, dstFourcc);
 
 	if (	fin  < 0 || srcHeight < 0 || srcWidth < 0 || srcFourcc < 0 || \
 		fout < 0 || dstHeight < 0 || dstWidth < 0 || dstFourcc < 0 || \
+	        selection.r.top < 0 || selection.r.left < 0 || \
+	        selection.r.width < 0 || selection.r.height < 0 || \
 		interlace < 0 || translen < 0 || num_frames < 0) {
 		printf("ERROR: Invalid arguments\n");
 		/** TODO:Handle errors precisely		*/
@@ -562,6 +606,7 @@ int main (
 			pexit("Can't set translen control\n");
 
 		printf("S_CTRL success\n");
+
 	}
 
 	/* Allocate buffers for CAPTURE and OUTPUT stream */
@@ -579,6 +624,13 @@ int main (
 		pexit("Cant Allocate buffurs for CAPTURE device\n");
 	}
 
+	if (selection.r.height > 0) {
+		ret = ioctl(fd, VIDIOC_S_SELECTION, &selection);
+		if (ret < 0)
+			pexit("error setting selection\n");
+
+		printf("S_SELECTION success\n");
+	}
 	/**	Queue All empty buffers	(Available to capture in)	*/
 	ret = queueAllBuffers (V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, dst_numbuf);
 	if(ret < 0) {
