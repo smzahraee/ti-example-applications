@@ -60,6 +60,8 @@ int main(int argc, char *argv[])
 	unsigned int console = 1;
 	int fd=0;
 	char *gpufifo = (char *)"/tmp/socfifo";
+	//TODO: Read GPU Frequency from SOC configuration and update the below value
+	float gpu_freq = 532000000.0;
 
 
 	//Internal control data 
@@ -97,7 +99,8 @@ int main(int argc, char *argv[])
 
 	if (PSInit(&psData, &psCounters, &sReading, &uCounterNum))  
 	{
-		printf("PVRScope up and running. \n"); 
+		printf("PVRScope up and running. GPU Frequency = %f\n", gpu_freq); 
+		sleep(1);
 	}
 	else 
 	{
@@ -148,10 +151,18 @@ int main(int argc, char *argv[])
 			{ 
 				char sendbuffer[100];
 
-				int gpuload = (int)((sReading.pfValueBuf[5]*sReading.pfValueBuf[4]/532000000.0 + sReading.pfValueBuf[6]*sReading.pfValueBuf[4]/532000000.0)*100)/100/2;
-				if(gpuload > 100)
-					gpuload = 100;
-				sprintf(sendbuffer, "CPULOAD: GPU %d", gpuload);
+				if(!console) {
+					int gpuload = (int)((sReading.pfValueBuf[5]*sReading.pfValueBuf[4]/gpu_freq + sReading.pfValueBuf[6]*sReading.pfValueBuf[4]/gpu_freq)*100)/100/2;
+					if(gpuload > 100)
+						gpuload = 100;
+					sprintf(sendbuffer, "CPULOAD: GPU %d", gpuload);
+				}
+				else {
+					int f_gpuload = (int)((sReading.pfValueBuf[5]*sReading.pfValueBuf[4]/gpu_freq )*100)/100;
+					int v_gpuload = (int)((sReading.pfValueBuf[6]*sReading.pfValueBuf[4]/gpu_freq )*100)/100;
+					sprintf(sendbuffer, "CPULOAD: GPUFV %d %d", f_gpuload, v_gpuload);
+				}
+
 				if(!console)
 					write(fd, sendbuffer, strlen(sendbuffer));
 				else
