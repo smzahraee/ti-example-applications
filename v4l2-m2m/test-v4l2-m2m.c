@@ -227,6 +227,8 @@ int allocBuffers(
 		fmt.fmt.pix_mp.field = V4L2_FIELD_ALTERNATE;
 	else if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE && interlace == 2)
 		fmt.fmt.pix_mp.field = V4L2_FIELD_SEQ_TB;
+	else if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE && interlace == 3)
+		fmt.fmt.pix_mp.field = V4L2_FIELD_SEQ_BT;
 	else
 		fmt.fmt.pix_mp.field = V4L2_FIELD_ANY;
 
@@ -530,8 +532,12 @@ int main (
 		"USAGE : <Devicename> <SRCfilename> <SRCWidth> <SRCHeight> <SRCFormat> "
 			"<DSTfilename> <DSTWidth> <DSTHeight> <DSTformat> "
                         "<interlace> <translen> <numframes>[optional] "
-			"crop=widthxheight@x,y[optional]\n");
+			"crop=widthxheight@x,y[optional]\n"
 
+			"Note:\n<interlace>\n0 - Progressive frame type\n"
+                        "1 - Deinterlace Alternate frame type\n"
+                        "2 - Deinterlace Sequence TB frame type\n"
+                        "3 - Deinterlace Sequence BT frame type\n");
 		return 1;
 	}
 
@@ -648,6 +654,8 @@ int main (
 
 	if (interlace == 2)
 		field = V4L2_FIELD_SEQ_TB;
+	else if (interlace == 3)
+		field = V4L2_FIELD_SEQ_BT;
 	else
 		field = V4L2_FIELD_TOP;
 	for (i = 0; i < src_numbuf && i < num_frames; i++) {
@@ -658,6 +666,8 @@ int main (
 		queue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE, i, field, srcSize, srcSize_uv);
 		if (interlace == 2)
 			field = V4L2_FIELD_SEQ_TB;
+		else if (interlace == 3)
+			field = V4L2_FIELD_SEQ_BT;
 		else if (field == V4L2_FIELD_TOP)
 			field = V4L2_FIELD_BOTTOM;
 		else
@@ -675,7 +685,7 @@ int main (
 		struct v4l2_buffer buf;
 		struct v4l2_plane buf_planes[2];
 		int last = num_frames == 1 ? 1 : 0;
-		int iter = interlace == 2? 2 : 1;
+		int iter = interlace >= 2? 2 : 1;
 
 		/* DEI: Do not Dequeue Source buffers immediately
 		 * De*interlacer keeps last two buffers in use */
