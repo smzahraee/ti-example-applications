@@ -545,7 +545,11 @@ int main(int argc, char **argv)
     if(STATCOLL == 1) {
 	    printf("STATISTICS COLLECTOR option chosen\n");
             printf("------------------------------------------------\n\n");
+#ifdef ANDROID
+	    fp = fopen("/data/statcoll/initiators.cfg", "r");
+#else
 	    fp = fopen("initiators.cfg", "r");
+#endif
 	    if (fp == NULL) {
 		    fprintf(stderr, "couldn't open the specified file initiators.cfg'\n");
 		    return -1;
@@ -565,5 +569,6 @@ int main(int argc, char **argv)
 	    statcoll_start(TOTAL_TIME, INTERVAL_US, list);
     }
 
+    return 0;
 }
 

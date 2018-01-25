@@ -148,5 +148,6 @@ typedef struct
     UInt32 mux_req;
 }statcoll_initiators_object;
 
+UInt32 statcoll_start(UInt32 TOTAL_TIME, UInt32 INTERVAL_US, char list[][50]);
 
 #endif

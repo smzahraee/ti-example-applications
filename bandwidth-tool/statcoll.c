@@ -47,6 +47,8 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #include "statcoll.h"
 
@@ -907,9 +909,11 @@ UInt32 statcoll_start(UInt32 TOTAL_TIME, UInt32 INTERVAL_US, char list[][50])
   
     struct timeval tv1, tv2;
     gettimeofday(&tv1, NULL);
+#ifndef ANDROID
     printf("------------------------------------------------\n");
     printf("Compile time = %s %s\n",__DATE__,  __TIME__);
     printf("------------------------------------------------\n\n");
+#endif
     //printd("Start time = %d\n", time(NULL));
     //printd("Time seconds = %d, usecs = %d\n", tv.tv_sec, tv.tv_usec);
 
@@ -950,7 +954,7 @@ UInt32 statcoll_start(UInt32 TOTAL_TIME, UInt32 INTERVAL_US, char list[][50])
     
    if (statcoll_base_mem == MAP_FAILED){
         printf("ERROR: mmap failed \n");
-        return;
+        return -1;
     }
     close(fd);
 
@@ -962,7 +966,7 @@ UInt32 statcoll_start(UInt32 TOTAL_TIME, UInt32 INTERVAL_US, char list[][50])
     l3_3_clkctrl = mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, fd, CM_L3INSTR_REGISTER_BASE);
     if (l3_3_clkctrl == MAP_FAILED){
         printf("ERROR: mmap failed for CM_L3INSTR_REGISTER_BASE\n");
-        return;
+        return -1;
     }
     close(fd);
 
@@ -1004,7 +1008,11 @@ UInt32 statcoll_start(UInt32 TOTAL_TIME, UInt32 INTERVAL_US, char list[][50])
     
     printf("------------------------------------------------\n\n");
     printf("SUCCESS: Stat collection completed... Writing into file now\n");
+#ifdef ANDROID
+    FILE *outfile = fopen("/data/statcoll/statcollector.csv", "w+");
+#else
     FILE *outfile = fopen("statcollector.csv", "w+");
+#endif
     if (!outfile) {
         printf("\n ERROR: Error opening file");
     }
