@@ -34,6 +34,8 @@ AC_LANG_C
 #Checks the presence of packages
 PKG_CHECK_MODULES(DRM, libdrm libdrm_omap)
 PKG_CHECK_MODULES(DCE, libdce)
+PKG_CHECK_MODULES(EGL, egl)
+PKG_CHECK_MODULES(GLES2, glesv2)
 PKG_CHECK_MODULES(WAYLAND, wayland-egl wayland-cursor wayland-client)
 PKG_CHECK_MODULES(UDEV, libudev)
 
@@ -77,5 +79,5 @@ fi
 
 # Checks for library functions.
 
-AC_CONFIG_FILES([Makefile v4l2-m2m/Makefile vip/Makefile drm-tests/Makefile thermal/Makefile messageq/messageq_ipc_linux/Makefile gst/Makefile bandwidth-tool/Makefile cpuload-plugins/Makefile])
+AC_CONFIG_FILES([Makefile v4l2-m2m/Makefile vip/Makefile drm-tests/Makefile graphics/Makefile thermal/Makefile messageq/messageq_ipc_linux/Makefile gst/Makefile bandwidth-tool/Makefile cpuload-plugins/Makefile])
 AC_OUTPUT
